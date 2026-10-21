@@ -47,7 +47,6 @@ ZOOKEEPER_NAVIGATOR_enable: false
 # ===== Apache Kafka ========
 #
 KAFKA_enable: true
-CONFLUENT_PLATFORM_version: 7.0.1
 # one of enterprise, community
 KAFKA_edition: 'community'
 KAFKA_volume_map_data: false
@@ -55,7 +54,7 @@ KAFKA_use_standard_port_for_external_interface: true
 KAFKA_datacenters: 1
 KAFKA_broker_nodes: 3
 KAFKA_broker_first_port: 9092
-KAFKA_use_kraft_mode: false
+KAFKA_use_kraft_mode: true
 KAFKA_internal_replication_factor: 3
 KAFKA_delete_topic_enable: true
 KAFKA_auto_create_topics_enable: false
@@ -278,7 +277,7 @@ HADOOP_datanodes: 2
 #
 # ===== Apache Spark ========
 #
-SPARK_enable: true
+SPARK_enable: false
 # either 3.3 or 3.4 or 3.5 or 4.0 or 4.1 or 4.2 (4.2 does not yet support table formats)
 SPARK_base_version: 4.1
 # "hive" or "in-memory"
@@ -377,7 +376,7 @@ HUE_enable: false
 #
 # =====  Streamsets Data Collector ========
 #
-STREAMSETS_enable: true
+STREAMSETS_enable: false
 STREAMSETS_volume_map_data: false
 STREAMSETS_volume_map_logs: false
 STREAMSETS_volume_map_security_policy: false
@@ -417,7 +416,7 @@ STREAMSETS_DATAOPS_deployment_token:
 #
 # ===== Apache NiFi ========
 #
-NIFI_enable: true
+NIFI_enable: false
 NIFI_run_secure: false
 NIFI_username: nifi
 # password must be 12 chars minimum, otherwise a random user and password is generated
@@ -470,7 +469,7 @@ AIRFLOW_provision_examples: false
 #
 # ===== Zeppelin ========
 #
-ZEPPELIN_enable: true
+ZEPPELIN_enable: false
 ZEPPELIN_volume_map_data: false
 ZEPPELIN_admin_username: admin
 ZEPPELIN_admin_password: changeme
