@@ -1,0 +1,9 @@
+@namespace("com.trivadis.demo.dto")
+protocol ProductProtocol {
+
+  record Product {
+    string id;
+    string name;
+    double price;
+  }
+}

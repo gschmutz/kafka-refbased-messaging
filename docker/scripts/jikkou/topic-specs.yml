@@ -1,0 +1,7 @@
+version: 1
+specs:
+  topics:
+  - name: '{{ labels.topic.prefix | default('') }}business-event-v1'
+    partitions: 8
+    replication_factor: 3
+

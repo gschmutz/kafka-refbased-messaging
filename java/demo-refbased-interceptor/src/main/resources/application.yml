@@ -1,0 +1,37 @@
+topic:
+  name: person
+  replication-factor: 3
+  partitions: 8
+
+bucket:
+  person:
+    name: person-ref-bucket
+  product:
+    name: product-ref-bucket
+
+spring:
+  kafka:
+    bootstrap-servers:
+      - ${DATAPLATFORM_IP}:9092
+      - ${DATAPLATFORM_IP}:9093
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.LongSerializer
+      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      properties:
+        auto.register.schemas: false
+        use.latest.version: true
+    properties:
+      schema.registry.url: http://${DATAPLATFORM_IP}:8081
+      interceptor.classes: com.trivadis.kafkaws.springbootkafkainterceptor.interceptor.ProducerInterceptorToStorage
+
+
+cloud:
+  aws:
+    credentials:
+      accessKey: minio
+      secretKey: 1234567890
+    region.static: us-east-1
+
+producer-app:
+  aws:
+    service-endpoint: http://${DATAPLATFORM_IP}:9000

@@ -1,0 +1,12 @@
+@namespace("com.trivadis.demo.dto")
+protocol BusinessEventProtocol {
+
+  record BusinessEvent {
+    timestamp_ms ts;
+    string objectType;
+    string bucketName;
+    string objectName;
+    int avroSchemaId;
+    union { null, string } avroSchema;    // could and maybe should be replaced by the schema ID
+  }
+}
