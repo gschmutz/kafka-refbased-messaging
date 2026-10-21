@@ -19,9 +19,9 @@ Or in `config.yml`:
 
 ## How to use it?
 
-Navigate to <http://192.168.1.112:9050> to access the mitmweb interface.
+Navigate to <http://dataplatform:9050> to access the mitmweb interface.
 
-Configure your HTTP/HTTPS client to use `192.168.1.112:9051` as its proxy.
+Configure your HTTP/HTTPS client to use `dataplatform:9051` as its proxy.
 
 ### Browser proxy setup
 
@@ -35,7 +35,7 @@ HTTPS Proxy: dataplatform  Port: 9051
 ### curl example
 
 ```bash
-curl -x http://192.168.1.112:9051 https://example.com
+curl -x http://dataplatform:9051 https://example.com
 ```
 
 ### Install the mitmproxy CA certificate

@@ -328,7 +328,7 @@ services:
       - -c
       - |
         /usr/src/app/wait-for-it.sh -t 180 rustfs-1:9000
-        mc mb --ignore-existing rustfs-1/admin-bucket
+        mc mb --ignore-existing rustfs-1/admin-bucket, person-ref-bucket
               for bucket in $$(tr ',' '\n' <<< "")
         do
           mc mb --ignore-existing rustfs-1/$$bucket

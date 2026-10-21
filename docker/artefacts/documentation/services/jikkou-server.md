@@ -14,4 +14,4 @@ platys gen
 
 ## How to use it?
 
-The REST API is exposed on <http://192.168.1.112:28388>.
+The REST API is exposed on <http://dataplatform:28388>.

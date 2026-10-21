@@ -13,9 +13,9 @@ platys gen
 
 ## How to use it?
 
-Navigate to <http://192.168.1.112:9104>
+Navigate to <http://dataplatform:9104>
 
-The Mimir API is available at <http://192.168.1.112:9104>.
+The Mimir API is available at <http://dataplatform:9104>.
 
 ### Send metrics from Prometheus
 

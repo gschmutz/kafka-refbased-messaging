@@ -57,4 +57,4 @@ input:
 
 ## Accessing Redpanda Connect
 
-- **Health / metrics**: <http://192.168.1.112:4195>
+- **Health / metrics**: <http://dataplatform:4195>

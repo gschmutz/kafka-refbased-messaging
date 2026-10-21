@@ -17,12 +17,12 @@ SCHEMA_REGISTRY_flavour: karapace
 
 ## Accessing the Schema Registry
 
-- **REST API**: <http://192.168.1.112:8081>
+- **REST API**: <http://dataplatform:8081>
 
 List registered subjects:
 
 ```bash
-curl http://192.168.1.112:8081/subjects
+curl http://dataplatform:8081/subjects
 ```
 
 ## Key Parameters
