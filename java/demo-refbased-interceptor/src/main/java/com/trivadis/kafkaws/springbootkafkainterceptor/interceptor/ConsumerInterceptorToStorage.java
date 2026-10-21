@@ -25,11 +25,26 @@ import org.apache.kafka.common.TopicPartition;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K, V> {
     private AmazonS3 s3client;
+
+    // DTOs are generated into the same package as BusinessEvent (e.g. com.trivadis.demo.dto)
+    private static final String DTO_PACKAGE = BusinessEvent.class.getPackage().getName();
+
+    @SuppressWarnings("unchecked")
+    private static Class<? extends SpecificRecordBase> resolvePayloadClass(String objectType) {
+        try {
+            // objectType may be a simple name ("Person") or already fully qualified
+            String className = objectType.contains(".") ? objectType : DTO_PACKAGE + "." + objectType;
+            return (Class<? extends SpecificRecordBase>) Class.forName(className);
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Unknown payload type: " + objectType, e);
+        }
+    }
 
     public static <T extends SpecificRecordBase> T deserialize(byte[] value, Class clazz) throws IOException {
         DatumReader<T> datumReader = new SpecificDatumReader<T>(clazz);
@@ -39,21 +54,39 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
 
     @Override
     public ConsumerRecords<K, V> onConsume(ConsumerRecords<K, V> records) {
-        List<ConsumerRecord<K,V> newRecords = new ArrayList<>();
+        Map<TopicPartition, List<ConsumerRecord<K, V>>> newRecords = new HashMap<>();
         records.forEach(r -> {
-            // retrieve Blob
-            BusinessEvent be = (BusinessEvent)r.value();
+            // retrieve Blob referenced by the BusinessEvent
+            BusinessEvent be = (BusinessEvent) r.value();
             S3Object s3object = s3client.getObject(be.getBucketName(), be.getObjectName());
             try {
                 byte[] byteArray = IOUtils.toByteArray(s3object.getObjectContent());
-                SpecificRecordBase srb = deserialize(byteArray, BusinessEvent.class);
+                // resolve the payload type from the objectType field of the BusinessEvent
+                Class<? extends SpecificRecordBase> payloadClass = resolvePayloadClass(be.getObjectType().toString());
+                SpecificRecordBase srb = deserialize(byteArray, payloadClass);
 
+                // build a new record with the resolved value in place of the reference
+                TopicPartition tp = new TopicPartition(r.topic(), r.partition());
+                ConsumerRecord<K, V> newRecord = new ConsumerRecord<>(
+                        r.topic(),
+                        r.partition(),
+                        r.offset(),
+                        r.timestamp(),
+                        r.timestampType(),
+                        r.serializedKeySize(),
+                        r.serializedValueSize(),
+                        r.key(),
+                        (V) srb,
+                        r.headers(),
+                        r.leaderEpoch());
+
+                newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(newRecord);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         });
 
-        return new ConsumerRecords<>()
+        return new ConsumerRecords<>(newRecords);
     }
 
     @Override
@@ -69,14 +102,14 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
     @Override
     public void configure(Map<String, ?> map) {
         AWSCredentials credentials = new BasicAWSCredentials(
-                "minio",
-                "1234567890"
+                "admin",
+                "abc123abc123!"
         );
 
         s3client = AmazonS3ClientBuilder
                 .standard()
                 .withCredentials(new AWSStaticCredentialsProvider(credentials))
-                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration("http://dataplatform:9000", Regions.US_EAST_2.getName()))
+                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration("http://dataplatform:9005", Regions.US_EAST_2.getName()))
                 .withPathStyleAccessEnabled(true)
                 .build();
     }

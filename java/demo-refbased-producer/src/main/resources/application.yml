@@ -27,10 +27,10 @@ spring:
 cloud:
   aws:
     credentials:
-      accessKey: minio
-      secretKey: 1234567890
+      accessKey: admin
+      secretKey: abc123abc123!
     region.static: us-east-1
 
 producer-app:
   aws:
-    service-endpoint: http://${DATAPLATFORM_IP}:9000
+    service-endpoint: http://${DATAPLATFORM_IP}:9005

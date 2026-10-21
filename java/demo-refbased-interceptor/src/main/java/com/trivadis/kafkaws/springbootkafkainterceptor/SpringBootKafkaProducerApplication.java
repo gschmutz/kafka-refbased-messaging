@@ -53,42 +53,6 @@ public class SpringBootKafkaProducerApplication implements CommandLineRunner {
 
 	}
 
-	private S3Object writeToPersonS3(Person person) throws java.io.IOException {
-		byte[] bytes = AvroUtil.serialize(person);
-		ByteArrayInputStream stream = new ByteArrayInputStream(bytes);
-
-		ObjectMetadata meta = new ObjectMetadata();
-		meta.setContentLength(bytes.length);
-		meta.setContentType("application/avro-binary");
-
-		String objectName = String.valueOf(person.getId()) + ".avro";
-
-		S3Object s3obj = new S3Object(personBucket, objectName);
-
-		PutObjectResult result = amazonS3.putObject(personBucket, objectName, stream, meta);
-		URL s3Url = amazonS3.getUrl(personBucket, objectName);
-
-		return s3obj;
-	}
-
-	private S3Object writeToProductS3(Product product) throws java.io.IOException {
-		byte[] bytes = AvroUtil.serialize(product);
-		ByteArrayInputStream stream = new ByteArrayInputStream(bytes);
-
-		ObjectMetadata meta = new ObjectMetadata();
-		meta.setContentLength(bytes.length);
-		meta.setContentType("application/avro-binary");
-
-		String objectName = String.valueOf(product.getId()) + ".avro";
-
-		S3Object s3obj = new S3Object(productBucket, objectName);
-
-		PutObjectResult result = amazonS3.putObject(productBucket, objectName, stream, meta);
-		URL s3Url = amazonS3.getUrl(productBucket, objectName);
-
-		return s3obj;
-	}
-
 	private void runProducer(int sendMessageCount, int waitMsInBetween, long id) throws Exception {
 		Long key = (id > 0) ? id : null;
 

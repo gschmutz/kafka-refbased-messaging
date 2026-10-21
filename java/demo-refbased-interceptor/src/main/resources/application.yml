@@ -20,18 +20,26 @@ spring:
       properties:
         auto.register.schemas: false
         use.latest.version: true
+        interceptor.classes: com.trivadis.kafkaws.springbootkafkainterceptor.interceptor.ProducerInterceptorToStorage
+        interceptor.storage.bucket.name: person-ref-bucket
+    consumer:
+      group-id: refbased-consumer
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.LongDeserializer
+      value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+      properties:
+        specific.avro.reader: true
+        interceptor.classes: com.trivadis.kafkaws.springbootkafkainterceptor.interceptor.ConsumerInterceptorToStorage
     properties:
       schema.registry.url: http://${DATAPLATFORM_IP}:8081
-      interceptor.classes: com.trivadis.kafkaws.springbootkafkainterceptor.interceptor.ProducerInterceptorToStorage
-
 
 cloud:
   aws:
     credentials:
-      accessKey: minio
-      secretKey: 1234567890
+      accessKey: admin
+      secretKey: abc123abc123!
     region.static: us-east-1
 
 producer-app:
   aws:
-    service-endpoint: http://${DATAPLATFORM_IP}:9000
+    service-endpoint: http://${DATAPLATFORM_IP}:9005
