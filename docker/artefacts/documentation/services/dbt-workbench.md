@@ -20,9 +20,9 @@ Or in `config.yml`:
 
 ## How to use it?
 
-Navigate to <http://dataplatform:28497> to access the dbt Workbench UI.
+Navigate to <http://192.168.1.112:28497> to access the dbt Workbench UI.
 
-The backend REST API is available at <http://dataplatform:28496>.
+The backend REST API is available at <http://192.168.1.112:28496>.
 
 ### Configuration
 

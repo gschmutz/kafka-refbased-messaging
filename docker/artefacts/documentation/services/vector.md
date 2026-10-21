@@ -13,9 +13,9 @@ platys gen
 
 ## How to use it?
 
-The Vector API is available at <http://dataplatform:9598>.
+The Vector API is available at <http://192.168.1.112:9598>.
 
-The health endpoint used by the Docker healthcheck is at <http://dataplatform:9598/health>.
+The health endpoint used by the Docker healthcheck is at <http://192.168.1.112:9598/health>.
 
 ### Configuration
 

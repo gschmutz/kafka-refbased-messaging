@@ -1,11 +1,11 @@
 # =======================================================================
-# Platform Name            demo-platform
+# Platform Name            platys-platform
 # Platform Stack:          trivadis/platys-modern-data-platform
 # Platform Stack Version:  develop
 # =======================================================================
 networks:
   default:
-    name: demo-platform
+    name: platys-platform
 services:
 #  ================================== Kafka ========================================== #
   kafka-1:
@@ -190,41 +190,6 @@ services:
       timeout: 10s
       retries: 30
       start_period: 30s
-  #  ================================== Schema Registry UI ========================================== #
-  schema-registry-ui:
-    image: docker.io/landoop/schema-registry-ui:latest
-    container_name: schema-registry-ui
-    hostname: schema-registry-ui
-    labels:
-      com.platys.name: schema-registry-ui
-      com.platys.description: Schema Registry UI
-      com.platys.webui.title: Confluent Schema Registry UI
-      com.platys.webui.url: http://dataplatform:28102
-    ports:
-      - 28102:8000
-    environment:
-      SCHEMAREGISTRY_URL: http://${PUBLIC_IP:-127.0.0.1}:8081
-    volumes:
-      - ./data-transfer:/data-transfer:z
-      - ./conf/schema-registry-ui/resolv.conf:/etc/resolv.conf:ro
-    restart: unless-stopped
-  #  ================================== kcat (used to be kafkacat)  ========================================== #
-  kcat:
-    image: docker.io/edenhill/kcat:1.7.1
-    container_name: kcat
-    hostname: kcat
-    labels:
-      com.platys.name: kcat
-      com.platys.description: Generic non-JVM Kafka consumer and producer
-    volumes:
-      - ./data-transfer:/data-transfer:z
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        apk add jq;
-        while [ 1 -eq 1 ];do sleep 60;done
-    restart: unless-stopped
   #  ================================== Jikkou ========================================== #
   jikkou:
     image: docker.io/streamthoughts/jikkou:latest
@@ -255,60 +220,106 @@ services:
       - --file-name
       - '**/*.{yaml,yml}'
     restart: on-failure
-  #  ================================== Minio ========================================== #
-  minio-1:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: minio-1
-    hostname: minio-1
+  #  ================================== Apache Kafka HQ (AKHQ) ========================================== #
+  akhq:
+    image: docker.io/tchiotludo/akhq:latest
+    container_name: akhq
+    hostname: akhq
     labels:
-      com.platys.name: minio
-      com.platys.description: Software-defined Object Storage
-      com.platys.webui.title: MinIO UI
-      com.platys.webui.url: http://dataplatform:9010
-      com.platys.password.envvars: 'PLATYS_AWS_SECRET_ACCESS_KEY, '
+      com.platys.name: akhq
+      com.platys.description: Kafka GUI
+      com.platys.webui.title: AKHQ UI
+      com.platys.webui.url: http://dataplatform:28345
+      com.platys.restapi.title: AKHQ API
+      com.platys.restapi.url: http://dataplatform:28345/api
+      com.platys.password.envvars: PLATYS_AKHQ_ADMIN_PASSWORD,PLATYS_AKHQ_READER_PASSWORD
     ports:
-      # S3 API Port
-      - 9000:9000
-      # UI Port
-      - 9010:9010
+      - 28345:8080
+      - 28320:28081
     environment:
-      MINIO_ROOT_USER: ${PLATYS_AWS_ACCESS_KEY:-minio}
-      MINIO_ROOT_PASSWORD: ${PLATYS_AWS_SECRET_ACCESS_KEY:-1234567890}
-      # remove region due to problems with RisingWave
-      #MINIO_REGION_NAME: us-east-1
-      #MINIO_REGION: us-east-1
-      MINIO_DOMAIN: minio
-      MINIO_SERVER_URL: http://${PUBLIC_IP:-127.0.0.1}:9000
-      MINIO_COMPRESSION_ENABLE: off
-      MINIO_PROMETHEUS_AUTH_TYPE: public
-      MINIO_PROMETHEUS_URL: http://prometheus-1:9090
+      AKHQ_CONFIGURATION: |
+        akhq:
+          pagination.page-size: 25
+          topic-data:
+            size: 50
+            poll-timeout: 1000
+            kafka-max-message-length: 1000000
+          ui-options:
+            topic:
+              default-view: HIDE_INTERNAL
+              skip-consumer-groups: false
+              skip-last-record: true
+              show-all-consumer-groups: true
+            topic-data:
+              sort: OLDEST
+          connections:
+            docker-kafka-server:
+              properties:
+                bootstrap.servers: 'kafka-1:19092,kafka-2:19093,kafka-3:19094'
+              schema-registry:
+                url: "http://schema-registry-1:8081"
+                type: "confluent"
     volumes:
       - ./data-transfer:/data-transfer:z
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        mkdir -p /root/.minio && echo "$$MINIO_LICENSE" > /root/.minio/minio.license && exec /usr/bin/docker-entrypoint.sh "$$@"
-    command: minio server /data --console-address ":9010"
     restart: unless-stopped
     healthcheck:
-      test: [CMD, curl, --no-proxy, '*', -f, http://localhost:9000/minio/health/live]
-      interval: 15s
-      timeout: 20s
-      retries: 3
-  #  ================================== Minio MC ========================================== #
-  minio-mc:
-    image: quay.io/minio/aistor/mc:latest
-    container_name: minio-mc
-    hostname: minio-mc
+      test: [CMD, curl, -f, http://localhost:28081/health]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  #  ================================== RustFS (S3 Storage) ========================================== #
+  rustfs-1:
+    image: docker.io/rustfs/rustfs:latest
+    container_name: rustfs-1
+    hostname: rustfs-1
+    security_opt:
+      - no-new-privileges:true
     labels:
-      com.platys.name: minio
-      com.platys.description: MinIO Console
+      com.platys.name: rustfs
+      com.platys.description: Software-defined Object Storage
+      com.platys.webui.title: RustFS Console
+      com.platys.webui.url: http://dataplatform:9014
+      com.platys.password.envvars: PLATYS_AWS_SECRET_ACCESS_KEY
+    ports:
+      - 9005:9000   # S3 API port
+      - 9014:9010   # Console port    
+    environment:
+      - RUSTFS_VOLUMES=/data/rustfs{0..3} # Define 4 storage volumes
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9010
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_CORS_ALLOWED_ORIGINS=*
+      - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=*
+      - RUSTFS_ACCESS_KEY=${PLATYS_AWS_ACCESS_KEY:-admin}
+      - RUSTFS_SECRET_KEY=${PLATYS_AWS_SECRET_ACCESS_KEY:-abc123abc123!}
+      - RUSTFS_OBS_LOGGER_LEVEL=info
+      # Keep strict disk topology checks enabled by default.
+      # For local testing only, set `RUSTFS_UNSAFE_BYPASS_DISK_CHECK=true` explicitly.      
+      - RUSTFS_UNSAFE_BYPASS_DISK_CHECK=true
+#      - RUSTFS_TLS_PATH=/opt/tls
+    volumes:
+      - ./data-transfer:/data-transfer:z
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, sh, -c, curl --noproxy '*' -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9010/rustfs/console/health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  #  ================================== RustFS MC ========================================== #
+  rustfs-mc:
+    image: quay.io/minio/aistor/mc:latest
+    container_name: rustfs-mc
+    hostname: rustfs-mc
+    labels:
+      com.platys.name: rustfs
+      com.platys.description: RustFS CLI
     environment:
       # these two env variables are also needed for the s3-credentials.properties file gen to work! 
-      AWS_ACCESS_KEY: ${PLATYS_AWS_ACCESS_KEY:-minio}
-      AWS_SECRET_ACCESS_KEY: ${PLATYS_AWS_SECRET_ACCESS_KEY:-1234567890}
-      MC_HOST_minio-1: http://${PLATYS_AWS_ACCESS_KEY:-minio}:${PLATYS_AWS_SECRET_ACCESS_KEY:-1234567890}@minio-1:9000
+      AWS_ACCESS_KEY: ${PLATYS_AWS_ACCESS_KEY:-admin}
+      AWS_SECRET_ACCESS_KEY: ${PLATYS_AWS_SECRET_ACCESS_KEY:-abc123abc123!}
+      MC_HOST_rustfs-1: http://${PLATYS_AWS_ACCESS_KEY:-admin}:${PLATYS_AWS_SECRET_ACCESS_KEY:-abc123abc123!}@rustfs-1:9000
     volumes:
       - ./data-transfer:/data-transfer:z
       - ./scripts/docker/wait-for-it.sh:/usr/src/app/wait-for-it.sh:z
@@ -316,36 +327,14 @@ services:
       - /bin/sh
       - -c
       - |
-        /usr/src/app/wait-for-it.sh -t 180 minio-1:9000
-        mc mb --ignore-existing minio-1/admin-bucket
+        /usr/src/app/wait-for-it.sh -t 180 rustfs-1:9000
+        mc mb --ignore-existing rustfs-1/admin-bucket
               for bucket in $$(tr ',' '\n' <<< "")
         do
-          mc mb --ignore-existing minio-1/$$bucket
+          mc mb --ignore-existing rustfs-1/$$bucket
         done
         #
         while [ 1 -eq 1 ];do sleep 60;done
-    restart: unless-stopped
-  #  ================================== Wetty ========================================== #
-  wetty:
-    image: docker.io/wettyoss/wetty:latest
-    container_name: wetty
-    hostname: wetty
-    labels:
-      com.platys.name: wetty
-      com.platys.description: A terminal window in Web-Browser
-      com.platys.webui.title: WeTTY UI
-      com.platys.webui.url: http://dataplatform:3001
-    ports:
-      - 3001:3000
-    environment:
-      - SSHHOST=${DOCKER_HOST_IP:-localhost}
-      - SSHPORT=22
-      - SSHUSER=
-      - SSHAUTH=password
-      - PORT=3000
-      - BASE=/
-    volumes:
-      - ./data-transfer:/data-transfer:z
     restart: unless-stopped
   #  ================================== markdown-viewer ========================================== #
   markdown-viewer:
@@ -383,7 +372,7 @@ services:
       PUBLIC_IP: ${PUBLIC_IP:-127.0.0.1}
       DOCKER_HOST_IP: ${DOCKER_HOST_IP:-localhost}
       DATAPLATFORM_HOME: ${DATAPLATFORM_HOME}
-      PLATYS_PLATFORM_NAME: demo-platform
+      PLATYS_PLATFORM_NAME: platys-platform
       PLATYS_PLATFORM_STACK: trivadis/platys-modern-data-platform
       PLATYS_PLATFORM_STACK_VERSION: develop
       PLATYS_COPY_COOKBOOK_DATA: 'True'

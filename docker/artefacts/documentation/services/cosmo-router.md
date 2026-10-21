@@ -13,7 +13,7 @@ platys gen
 
 ## How to use it?
 
-Navigate to <http://dataplatform:28495>.
+Navigate to <http://192.168.1.112:28495>.
 
 The router requires an execution config file before starting. Place your `config.json` at `./conf/cosmo-router/config.json` in your stack directory. You can generate this file using the Cosmo CLI or from WunderGraph Cosmo Cloud.
 

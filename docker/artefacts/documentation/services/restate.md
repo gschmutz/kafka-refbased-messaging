@@ -18,16 +18,16 @@ RESTATE_enable: true
 
 ## Accessing Restate
 
-- **Admin API**: <http://dataplatform:28217>
-- **Ingress** (for calling registered services): <http://dataplatform:28216>
-- **Metrics**: <http://dataplatform:28218/metrics>
+- **Admin API**: <http://192.168.1.112:28217>
+- **Ingress** (for calling registered services): <http://192.168.1.112:28216>
+- **Metrics**: <http://192.168.1.112:28218/metrics>
 
 ## Registering a Service
 
 Once Restate is running, register your service endpoint via the Admin API:
 
 ```bash
-curl -X POST http://dataplatform:28216/deployments \
+curl -X POST http://192.168.1.112:28216/deployments \
   -H 'Content-Type: application/json' \
   -d '{"uri": "http://host.docker.internal:<your-service-port>"}'
 ```

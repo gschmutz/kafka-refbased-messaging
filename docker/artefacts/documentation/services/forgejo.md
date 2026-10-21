@@ -19,7 +19,7 @@ Or in `config.yml`:
 
 ## How to use it?
 
-Navigate to <http://dataplatform:3004> to access the Forgejo web UI.
+Navigate to <http://192.168.1.112:3004> to access the Forgejo web UI.
 
 On first access, complete the installation wizard to set up your admin account and site settings.
 
@@ -34,11 +34,11 @@ ssh -p 2223 git@dataplatform
 Clone a repository via SSH:
 
 ```bash
-git clone ssh://git@dataplatform:2223/<user>/<repo>.git
+git clone ssh://git@192.168.1.112:2223/<user>/<repo>.git
 ```
 
 Clone a repository via HTTP:
 
 ```bash
-git clone http://dataplatform:3004/<user>/<repo>.git
+git clone http://192.168.1.112:3004/<user>/<repo>.git
 ```
