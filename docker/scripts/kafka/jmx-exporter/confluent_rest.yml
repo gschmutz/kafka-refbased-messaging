@@ -26,6 +26,7 @@ rules:
   - pattern: "kafka.rest<type=(.+), client-id=(.+), node-id=node-(.+)><>(.+): (.+)"
     name: "kafka_rest_$1_$4"
     type: GAUGE
+    cache: true
     labels:
       client_id: $2
       node_id: $3
@@ -34,5 +35,6 @@ rules:
   - pattern: "kafka.rest<type=(.+), client-id=(.+)><>(.+): (.+)"
     name: "kafka_rest_$1_$3"
     type: GAUGE
+    cache: true
     labels:
       client_id: $2

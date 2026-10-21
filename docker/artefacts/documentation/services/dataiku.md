@@ -7,10 +7,10 @@ Shiny is an R package that makes it easy to build interactive web apps straight 
 ## How to enable?
 
 ```
-platys init --enable-services DATAIKU_DSS
+platys init --enable-services DATAIKU
 platys gen
 ```
 
 ## How to use it?
 
-Navigate to <http://dataplatform:28205>
+Navigate to <http://dataplatform:28315>
