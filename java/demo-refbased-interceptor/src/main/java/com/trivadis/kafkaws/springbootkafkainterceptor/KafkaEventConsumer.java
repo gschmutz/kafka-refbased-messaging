@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  * <p>
  * The producer writes {@code Person} events to {@code ${topic.name}}, where the
  * {@code ProducerInterceptorToStorage} stores the payload in object storage and
- * forwards only a {@code BusinessEvent} reference to the {@code ${topic.name}-refb}
+ * forwards only a {@code ObjectReference} reference to the {@code ${topic.name}-refb}
  * topic. This consumer listens on that reference topic; the
  * {@code ConsumerInterceptorToStorage} (wired via {@code interceptor.classes}) resolves
  * each reference back into the original payload before it reaches this listener, so the

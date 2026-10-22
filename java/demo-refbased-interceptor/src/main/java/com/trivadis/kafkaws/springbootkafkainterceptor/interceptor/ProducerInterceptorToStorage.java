@@ -23,14 +23,27 @@ import com.amazonaws.regions.Regions;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.trivadis.demo.dto.BusinessEvent;
+import com.trivadis.demo.dto.ObjectReference;
 
 public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.SpecificRecordBase>
                 implements ProducerInterceptor<K, V> {
 
     /** Producer config key used to configure the target bucket for the stored objects. */
     public static final String BUCKET_NAME_CONFIG = "interceptor.storage.bucket.name";
+    /** Producer config key used to configure the S3 access key. */
+    public static final String ACCESS_KEY_CONFIG = "interceptor.storage.access.key";
+    /** Producer config key used to configure the S3 secret key. */
+    public static final String SECRET_KEY_CONFIG = "interceptor.storage.secret.key";
+    /** Producer config key used to configure the S3 service endpoint. */
+    public static final String SERVICE_ENDPOINT_CONFIG = "interceptor.storage.service.endpoint";
+    /** Producer config key used to configure the S3 signing region. */
+    public static final String REGION_CONFIG = "interceptor.storage.region";
+
     private static final String DEFAULT_BUCKET_NAME = "large-object-bucket";
+    private static final String DEFAULT_ACCESS_KEY = "admin";
+    private static final String DEFAULT_SECRET_KEY = "abc123abc123!";
+    private static final String DEFAULT_SERVICE_ENDPOINT = "http://dataplatform:9005";
+    private static final String DEFAULT_REGION = Regions.US_EAST_2.getName();
 
     private AmazonS3 s3client;
     private String bucketName = DEFAULT_BUCKET_NAME;
@@ -74,16 +87,14 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
                 meta
         );
 
-        BusinessEvent businessEvent = BusinessEvent.newBuilder()
+        ObjectReference objectReference = ObjectReference.newBuilder()
                 .setTs(Instant.now())
-                .setObjectType("Person")
+                .setPayloadType("Person")
                 .setBucketName(bucketName)
                 .setObjectName(objectName)
-                .setAvroSchemaId(0)
-                .setAvroSchema(record.value().getSchema().toString())
                 .build();
 
-        ProducerRecord<K,BusinessEvent> newRecord = new ProducerRecord<>(record.topic() + "-refb", record.key(), businessEvent);
+        ProducerRecord<K,ObjectReference> newRecord = new ProducerRecord<>(record.topic() + "-refb", record.key(), objectReference);
 
         return newRecord;
     }
@@ -109,22 +120,25 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
      */
     @Override
     public void configure(final Map<String, ?> configs) {
-        Object configuredBucket = configs.get(BUCKET_NAME_CONFIG);
-        if (configuredBucket != null) {
-            bucketName = configuredBucket.toString();
-        }
+        bucketName = getOrDefault(configs, BUCKET_NAME_CONFIG, DEFAULT_BUCKET_NAME);
+        String accessKey = getOrDefault(configs, ACCESS_KEY_CONFIG, DEFAULT_ACCESS_KEY);
+        String secretKey = getOrDefault(configs, SECRET_KEY_CONFIG, DEFAULT_SECRET_KEY);
+        String serviceEndpoint = getOrDefault(configs, SERVICE_ENDPOINT_CONFIG, DEFAULT_SERVICE_ENDPOINT);
+        String region = getOrDefault(configs, REGION_CONFIG, DEFAULT_REGION);
 
-        AWSCredentials credentials = new BasicAWSCredentials(
-                "admin",
-                "abc123abc123!"
-        );
+        AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
 
         s3client = AmazonS3ClientBuilder
                 .standard()
                 .withCredentials(new AWSStaticCredentialsProvider(credentials))
-                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration("http://dataplatform:9005", Regions.US_EAST_2.getName()))
+                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
                 .withPathStyleAccessEnabled(true)
                 .build();
+    }
+
+    private static String getOrDefault(final Map<String, ?> configs, String key, String defaultValue) {
+        Object value = configs.get(key);
+        return value != null ? value.toString() : defaultValue;
     }
 
 }

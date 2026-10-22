@@ -3,12 +3,6 @@ topic:
   replication-factor: 3
   partitions: 8
 
-bucket:
-  person:
-    name: person-ref-bucket
-  product:
-    name: product-ref-bucket
-
 spring:
   kafka:
     bootstrap-servers:
@@ -22,6 +16,10 @@ spring:
         use.latest.version: true
         interceptor.classes: com.trivadis.kafkaws.springbootkafkainterceptor.interceptor.ProducerInterceptorToStorage
         interceptor.storage.bucket.name: person-ref-bucket
+        interceptor.storage.access.key: admin
+        interceptor.storage.secret.key: abc123abc123!
+        interceptor.storage.service.endpoint: http://${DATAPLATFORM_IP}:9005
+        interceptor.storage.region: us-east-2
     consumer:
       group-id: refbased-consumer
       auto-offset-reset: earliest
@@ -30,6 +28,10 @@ spring:
       properties:
         specific.avro.reader: true
         interceptor.classes: com.trivadis.kafkaws.springbootkafkainterceptor.interceptor.ConsumerInterceptorToStorage
+        interceptor.storage.access.key: admin
+        interceptor.storage.secret.key: abc123abc123!
+        interceptor.storage.service.endpoint: http://${DATAPLATFORM_IP}:9005
+        interceptor.storage.region: us-east-2
     properties:
       schema.registry.url: http://${DATAPLATFORM_IP}:8081
 

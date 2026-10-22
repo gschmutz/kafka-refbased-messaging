@@ -1,6 +1,6 @@
 package com.trivadis.kafkaws.springbootkafkaproducer;
 
-import com.trivadis.demo.dto.BusinessEvent;
+import com.trivadis.demo.dto.ObjectReference;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
@@ -24,17 +24,17 @@ public class KafkaEventProducer {
     private static final Logger LOGGER = LoggerFactory.getLogger(KafkaEventProducer.class);
 
     @Autowired
-    private KafkaTemplate<Long, BusinessEvent> kafkaTemplate;
+    private KafkaTemplate<Long, ObjectReference> kafkaTemplate;
 
     @Value("${topic.name}")
     String kafkaTopic;
 
-    public void produce(Integer id, Long key, BusinessEvent businessEvent) {
+    public void produce(Integer id, Long key, ObjectReference objectReference) {
         long time = System.currentTimeMillis();
 
-        SendResult<Long, BusinessEvent> result = null;
+        SendResult<Long, ObjectReference> result = null;
         try {
-            ProducerRecord<Long,BusinessEvent> producerRecord = new ProducerRecord<>(kafkaTopic, key, businessEvent);
+            ProducerRecord<Long,ObjectReference> producerRecord = new ProducerRecord<>(kafkaTopic, key, objectReference);
             producerRecord.headers().add(new RecordHeader("message-version", "1.1".getBytes(StandardCharsets.UTF_8)));
             result = kafkaTemplate.send(producerRecord).get(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
@@ -48,7 +48,7 @@ public class KafkaEventProducer {
         long elapsedTime = System.currentTimeMillis() - time;
         System.out.printf("[" + id + "] sent record(key=%s value=%s) "
                         + "meta(partition=%d, offset=%d) time=%d\n",
-                key, businessEvent, result.getRecordMetadata().partition(),
+                key, objectReference, result.getRecordMetadata().partition(),
                 result.getRecordMetadata().offset(), elapsedTime);
     }
 }

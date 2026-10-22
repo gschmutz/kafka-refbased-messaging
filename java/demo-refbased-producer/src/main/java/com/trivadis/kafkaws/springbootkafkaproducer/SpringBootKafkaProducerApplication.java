@@ -7,7 +7,7 @@ import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.PutObjectResult;
 import com.github.javafaker.Faker;
-import com.trivadis.demo.dto.BusinessEvent;
+import com.trivadis.demo.dto.ObjectReference;
 import com.trivadis.demo.dto.Person;
 import com.trivadis.demo.dto.Product;
 import org.apache.avro.specific.SpecificRecord;
@@ -117,14 +117,13 @@ public class SpringBootKafkaProducerApplication implements CommandLineRunner {
 
 			S3Object personObj = writeToPersonS3(person);
 
-			BusinessEvent businessEventPerson = BusinessEvent.newBuilder()
+			ObjectReference objectReferencePerson = ObjectReference.newBuilder()
 					.setTs(Instant.now())
-					.setObjectType("Person")
+					.setPayloadType("Person")
 					.setBucketName(personObj.bucketName)
 					.setObjectName(personObj.objectName)
-					.setAvroSchema(Person.SCHEMA$.toString())
 						.build();
-			kafkaEventProducer.produce(index, key, businessEventPerson);
+			kafkaEventProducer.produce(index, key, objectReferencePerson);
 
 			UUID productId = UUID.randomUUID();
 			Product product = Product.newBuilder().setId(productId.toString()).setName(faker.commerce().productName())
@@ -132,15 +131,14 @@ public class SpringBootKafkaProducerApplication implements CommandLineRunner {
 
 			S3Object productObj = writeToProductS3(product);
 
-			BusinessEvent businessEventProduct = BusinessEvent.newBuilder()
+			ObjectReference objectReferenceProduct = ObjectReference.newBuilder()
 					.setTs(Instant.now())
-					.setObjectType("Product")
+					.setPayloadType("Product")
 					.setBucketName(productObj.bucketName)
 					.setObjectName(productObj.objectName)
-					.setAvroSchema(Product.SCHEMA$.toString())
 						.build();
 
-			kafkaEventProducer.produce(index, key, businessEventProduct);
+			kafkaEventProducer.produce(index, key, objectReferenceProduct);
 
 			// Simulate slow processing
 			Thread.sleep(waitMsInBetween);

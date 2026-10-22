@@ -4,7 +4,7 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectResult;
 import com.github.javafaker.Faker;
-import com.trivadis.demo.dto.BusinessEvent;
+import com.trivadis.demo.dto.ObjectReference;
 import com.trivadis.demo.dto.Person;
 import com.trivadis.demo.dto.Product;
 import org.slf4j.Logger;
@@ -27,15 +27,6 @@ public class SpringBootKafkaProducerApplication implements CommandLineRunner {
 
 	@Autowired
 	private KafkaEventProducer kafkaEventProducer;
-
-	@Autowired
-	private AmazonS3 amazonS3;
-
-	@Value(value = "${bucket.person.name}")
-	private String personBucket;
-
-	@Value(value = "${bucket.product.name}")
-	private String productBucket;
 
 	public static void main(String[] args) {
 		SpringApplication.run(SpringBootKafkaProducerApplication.class, args);
