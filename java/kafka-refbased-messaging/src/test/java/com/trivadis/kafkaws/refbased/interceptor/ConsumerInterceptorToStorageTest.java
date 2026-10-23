@@ -2,6 +2,7 @@ package com.trivadis.kafkaws.refbased.interceptor;
 
 import com.amazonaws.services.s3.model.S3Object;
 import com.trivadis.demo.dto.ObjectReference;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ConsumerInterceptorMetricsMBean;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.common.TopicPartition;
