@@ -1,6 +1,7 @@
 package com.trivadis.kafkaws.refbased.interceptor;
 
 import com.amazonaws.services.s3.model.S3Object;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ConsumerInterceptorMetricsMBean;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -57,6 +58,10 @@ class ConsumerInterceptorToStorageHeadersTest {
         assertEquals("just-a-string", it.next().value());
         assertFalse(it.hasNext());
         assertEquals(0, s3.getCount);
+
+        ConsumerInterceptorMetricsMBean m = (ConsumerInterceptorMetricsMBean) TestSupport.getField(interceptor, "metrics");
+        assertEquals(0, m.getRecordsMaterialized());
+        assertEquals(1, m.getRecordsPassedThrough());
     }
 
     @Test
@@ -93,5 +98,11 @@ class ConsumerInterceptorToStorageHeadersTest {
         assertEquals(Long.valueOf(9L), materialized.key());
         assertEquals("bucket", s3.getBucket);
         assertEquals("key123", s3.getKey);
+
+        ConsumerInterceptorMetricsMBean m = (ConsumerInterceptorMetricsMBean) TestSupport.getField(interceptor, "metrics");
+        assertEquals(1, m.getRecordsMaterialized());
+        assertEquals(0, m.getRecordsPassedThrough());
+        assertEquals(bytes.length, m.getBytesFetched());
+        assertEquals(0, m.getFetchErrors());
     }
 }

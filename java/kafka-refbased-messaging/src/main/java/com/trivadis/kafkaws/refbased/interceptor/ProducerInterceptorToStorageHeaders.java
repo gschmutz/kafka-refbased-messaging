@@ -17,6 +17,8 @@ import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.serialization.Serializer;
 
+import javax.management.ObjectName;
+
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.AWSStaticCredentialsProvider;
 import com.amazonaws.auth.BasicAWSCredentials;
@@ -25,6 +27,9 @@ import com.amazonaws.regions.Regions;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.JmxMetrics;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetrics;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetricsMBean;
 
 /**
  * Header-based, <strong>serializer-agnostic</strong> variant of {@link ProducerInterceptorToStorage}
@@ -57,6 +62,11 @@ import com.amazonaws.services.s3.model.ObjectMetadata;
  * <strong>Configuration</strong> adds nothing beyond {@link ProducerInterceptorToStorage}'s
  * {@code interceptor.storage.*} keys; it additionally reads the standard
  * {@code value.serializer} the producer is already configured with.
+ * <p>
+ * <strong>Monitoring.</strong> Behaviour counters (records externalized / inline, bytes externalized,
+ * errors) are exposed as a JMX MBean under
+ * {@code com.trivadis.kafkaws.refbased:type=ProducerInterceptor,client-id=<client.id>}; see
+ * {@link ProducerInterceptorMetricsMBean}.
  *
  * @param <K> record key type
  * @param <V> record value type (opaque; serialized via the configured {@code value.serializer})
@@ -137,6 +147,8 @@ public class ProducerInterceptorToStorageHeaders<K, V>
     private static final DateTimeFormatter DAILY_FMT = DateTimeFormatter.ofPattern("yyyy/MM/dd").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter HOURLY_FMT = DateTimeFormatter.ofPattern("yyyy/MM/dd/HH").withZone(ZoneOffset.UTC);
 
+    private final ProducerInterceptorMetrics metrics = new ProducerInterceptorMetrics();
+    private ObjectName metricsName;
     private AmazonS3 s3client;
     private Serializer<Object> valueSerializer;
     private String bucketName = DEFAULT_BUCKET_NAME;
@@ -166,6 +178,7 @@ public class ProducerInterceptorToStorageHeaders<K, V>
         // (or a serializer that yields null) can never be externalized, so pass it through
         byte[] bytes = valueSerializer.serialize(record.topic(), record.value());
         if (bytes == null || bytes.length <= sizeThreshold) {
+            metrics.recordInline();
             return record;
         }
 
@@ -202,17 +215,23 @@ public class ProducerInterceptorToStorageHeaders<K, V>
         String bucket = applyTopicPlaceholder(bucketName, resolvedTopic);
         String objectName = buildObjectName(resolvedTopic);
 
-        // make sure the target bucket exists before storing the object
-        if (!s3client.doesBucketExistV2(bucket)) {
-            s3client.createBucket(bucket);
-        }
+        try {
+            // make sure the target bucket exists before storing the object
+            if (!s3client.doesBucketExistV2(bucket)) {
+                s3client.createBucket(bucket);
+            }
 
-        s3client.putObject(
-                bucket,
-                objectName,
-                stream,
-                meta
-        );
+            s3client.putObject(
+                    bucket,
+                    objectName,
+                    stream,
+                    meta
+            );
+        } catch (RuntimeException e) {
+            metrics.recordError();
+            throw e;
+        }
+        metrics.recordExternalized(bytes.length);
 
         // carry the reference in headers (preserving any headers the application already set) and
         // send a null value, so the configured value serializer is irrelevant for this record
@@ -236,10 +255,11 @@ public class ProducerInterceptorToStorageHeaders<K, V>
     }
 
     /**
-     * Closes the value serializer this interceptor instantiated.
+     * Unregisters the metrics MBean and closes the value serializer this interceptor instantiated.
      */
     @Override
     public void close() {
+        JmxMetrics.unregister(metricsName);
         if (valueSerializer != null) {
             valueSerializer.close();
         }
@@ -278,6 +298,8 @@ public class ProducerInterceptorToStorageHeaders<K, V>
                 .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
                 .withPathStyleAccessEnabled(true)
                 .build();
+
+        metricsName = JmxMetrics.register(metrics, "ProducerInterceptor", getOrDefault(configs, "client.id", ""));
     }
 
     /**

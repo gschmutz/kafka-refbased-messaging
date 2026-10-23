@@ -1,5 +1,6 @@
 package com.trivadis.kafkaws.refbased.interceptor;
 
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetricsMBean;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Header;
@@ -14,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the serializer-agnostic header variant using a plain {@link StringSerializer} payload (no
@@ -73,6 +75,12 @@ class ProducerInterceptorToStorageHeadersTest {
         assertEquals(1, s3.putCount);
         assertEquals("bucket", s3.putBucket);
         assertEquals(header(result, ProducerInterceptorToStorageHeaders.HEADER_OBJECT), s3.putKey);
+
+        ProducerInterceptorMetricsMBean m = (ProducerInterceptorMetricsMBean) TestSupport.getField(i, "metrics");
+        assertEquals(1, m.getRecordsExternalized());
+        assertEquals(0, m.getRecordsInline());
+        assertTrue(m.getBytesExternalized() > 0);
+        assertEquals(0, m.getExternalizationErrors());
     }
 
     @Test

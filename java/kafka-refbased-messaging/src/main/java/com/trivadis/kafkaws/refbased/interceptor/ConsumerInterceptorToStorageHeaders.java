@@ -9,6 +9,9 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.util.IOUtils;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ConsumerInterceptorMetrics;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ConsumerInterceptorMetricsMBean;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.JmxMetrics;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -17,6 +20,8 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.Deserializer;
+
+import javax.management.ObjectName;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -48,6 +53,11 @@ import java.util.Map;
  * <strong>Configuration</strong> adds nothing beyond {@link ConsumerInterceptorToStorage}'s
  * {@code interceptor.storage.*} keys; it additionally reads the standard {@code value.deserializer}
  * the consumer is already configured with.
+ * <p>
+ * <strong>Monitoring.</strong> Behaviour counters (records materialized / passed through, bytes
+ * fetched, errors) are exposed as a JMX MBean under
+ * {@code com.trivadis.kafkaws.refbased:type=ConsumerInterceptor,client-id=<client.id>}; see
+ * {@link ConsumerInterceptorMetricsMBean}.
  *
  * @param <K> record key type
  * @param <V> record value type (opaque; reconstructed via the configured {@code value.deserializer})
@@ -67,6 +77,8 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
     private static final String DEFAULT_SERVICE_ENDPOINT = "http://dataplatform:9005";
     private static final String DEFAULT_REGION = Regions.US_EAST_2.getName();
 
+    private final ConsumerInterceptorMetrics metrics = new ConsumerInterceptorMetrics();
+    private ObjectName metricsName;
     private AmazonS3 s3client;
     private Deserializer<Object> valueDeserializer;
 
@@ -93,6 +105,7 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
             // by the producer interceptor and are passed through unchanged
             Header bucketHeader = r.headers().lastHeader(ProducerInterceptorToStorageHeaders.HEADER_BUCKET);
             if (bucketHeader == null) {
+                metrics.recordPassThrough();
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(r);
                 return;
             }
@@ -100,9 +113,9 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
             String bucket = new String(bucketHeader.value(), StandardCharsets.UTF_8);
             String objectName = headerValue(r, ProducerInterceptorToStorageHeaders.HEADER_OBJECT);
 
-            // retrieve Blob referenced by the headers
-            S3Object s3object = s3client.getObject(bucket, objectName);
             try {
+                // retrieve Blob referenced by the headers
+                S3Object s3object = s3client.getObject(bucket, objectName);
                 byte[] byteArray = IOUtils.toByteArray(s3object.getObjectContent());
                 // reconstruct the opaque value via the consumer's configured value deserializer
                 V value = (V) valueDeserializer.deserialize(r.topic(), r.headers(), byteArray);
@@ -122,9 +135,14 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
                         r.headers(),
                         r.leaderEpoch());
 
+                metrics.recordMaterialized(byteArray.length);
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(newRecord);
             } catch (IOException e) {
+                metrics.recordError();
                 throw new RuntimeException(e);
+            } catch (RuntimeException e) {
+                metrics.recordError();
+                throw e;
             }
         });
 
@@ -146,10 +164,11 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
     }
 
     /**
-     * Closes the value deserializer this interceptor instantiated.
+     * Unregisters the metrics MBean and closes the value deserializer this interceptor instantiated.
      */
     @Override
     public void close() {
+        JmxMetrics.unregister(metricsName);
         if (valueDeserializer != null) {
             valueDeserializer.close();
         }
@@ -181,6 +200,8 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
                 .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
                 .withPathStyleAccessEnabled(true)
                 .build();
+
+        metricsName = JmxMetrics.register(metrics, "ConsumerInterceptor", getOrDefault(map, "client.id", ""));
     }
 
     /**
