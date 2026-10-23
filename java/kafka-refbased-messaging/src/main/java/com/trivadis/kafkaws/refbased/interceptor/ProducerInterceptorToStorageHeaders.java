@@ -1,8 +1,6 @@
 package com.trivadis.kafkaws.refbased.interceptor;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -11,15 +9,13 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-import org.apache.avro.io.BinaryEncoder;
-import org.apache.avro.io.DatumWriter;
-import org.apache.avro.io.EncoderFactory;
-import org.apache.avro.specific.SpecificDatumWriter;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerInterceptor;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.serialization.Serializer;
 
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.AWSStaticCredentialsProvider;
@@ -31,24 +27,26 @@ import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 
 /**
- * Header-based variant of {@link ProducerInterceptorToStorage} implementing Reference-Based
- * Messaging (the Claim Check pattern) for large Avro payloads.
+ * Header-based, <strong>serializer-agnostic</strong> variant of {@link ProducerInterceptorToStorage}
+ * implementing Reference-Based Messaging (the Claim Check pattern) for large payloads of
+ * <em>any</em> type.
  * <p>
- * This variant differs from {@link ProducerInterceptorToStorage} only in <em>how</em> the reference
- * is carried on the topic. Instead of replacing the record value with an Avro
- * {@link com.trivadis.demo.dto.ObjectReference}, it externalizes the payload to object storage and
- * then publishes the record with:
+ * Unlike {@link ProducerInterceptorToStorage} (and the original Avro-only header variant), this
+ * interceptor does not assume Avro. It treats the record value as opaque: to externalize a payload
+ * it delegates to the producer's configured {@code value.serializer} to turn the value into bytes,
+ * stores those bytes in object storage, and then publishes the record with:
  * <ul>
  *   <li>a <strong>{@code null} value</strong> &mdash; which every Kafka {@code Serializer} accepts
- *       regardless of type, so the configured {@code value.serializer} is irrelevant for
- *       externalized records; and</li>
+ *       regardless of type; and</li>
  *   <li>the reference data in <strong>Kafka record headers</strong> ({@link #HEADER_BUCKET},
  *       {@link #HEADER_OBJECT}, {@link #HEADER_PAYLOAD_TYPE}, {@link #HEADER_TS}).</li>
  * </ul>
- * The matching {@link ConsumerInterceptorToStorageHeaders} reverses the process, reading the headers
- * and fetching / deserializing the externalized payload from storage.
+ * Because the bytes are produced by the same serializer the producer is configured with (Avro, JSON,
+ * String, byte[], &hellip;), the matching {@link ConsumerInterceptorToStorageHeaders} can reconstruct
+ * the value using the consumer's configured {@code value.deserializer} &mdash; no type-specific code
+ * in the interceptor itself.
  * <p>
- * As with the Avro-reference variant, records whose serialized value is at or below the configured
+ * As with the other variants, records whose serialized value is at or below the configured
  * {@link #SIZE_THRESHOLD_CONFIG size threshold} are passed through unchanged (inline, with no
  * reference headers), and each stored object carries the same Kafka context as S3 user metadata.
  * <p>
@@ -56,13 +54,14 @@ import com.amazonaws.services.s3.model.ObjectMetadata;
  * variant must not be used on a compacted topic (every externalized record would mark its key for
  * deletion). On normal delete/time-retention topics it is safe.
  * <p>
- * <strong>Configuration</strong> is identical to {@link ProducerInterceptorToStorage}; see that
- * class for the full list of {@code interceptor.storage.*} keys.
+ * <strong>Configuration</strong> adds nothing beyond {@link ProducerInterceptorToStorage}'s
+ * {@code interceptor.storage.*} keys; it additionally reads the standard
+ * {@code value.serializer} the producer is already configured with.
  *
  * @param <K> record key type
- * @param <V> record value type; must be an Avro {@link org.apache.avro.specific.SpecificRecordBase}
+ * @param <V> record value type (opaque; serialized via the configured {@code value.serializer})
  */
-public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.specific.SpecificRecordBase>
+public class ProducerInterceptorToStorageHeaders<K, V>
                 implements ProducerInterceptor<K, V> {
 
     /** Common prefix for all reference headers written by this interceptor. */
@@ -71,7 +70,7 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
     public static final String HEADER_BUCKET = HEADER_PREFIX + "bucket";
     /** Header carrying the object name (key) of the externalized payload within the bucket. */
     public static final String HEADER_OBJECT = HEADER_PREFIX + "object";
-    /** Header carrying the payload type (simple or fully-qualified name) used by the consumer to resolve the Avro class. */
+    /** Header carrying the payload's Java class name at produce time (informational / traceability only). */
     public static final String HEADER_PAYLOAD_TYPE = HEADER_PREFIX + "payloadType";
     /** Header carrying the reference creation timestamp, in epoch milliseconds (UTF-8 decimal string). */
     public static final String HEADER_TS = HEADER_PREFIX + "ts";
@@ -139,6 +138,7 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
     private static final DateTimeFormatter HOURLY_FMT = DateTimeFormatter.ofPattern("yyyy/MM/dd/HH").withZone(ZoneOffset.UTC);
 
     private AmazonS3 s3client;
+    private Serializer<Object> valueSerializer;
     private String bucketName = DEFAULT_BUCKET_NAME;
     private int sizeThreshold = DEFAULT_SIZE_THRESHOLD;
     private String objectPrefix = DEFAULT_OBJECT_PREFIX;
@@ -147,62 +147,37 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
     private String topicTransformReplacement = "";
 
     /**
-     * Serializes an Avro {@link org.apache.avro.specific.SpecificRecordBase} to its Avro binary
-     * encoding (no Schema Registry framing / magic byte) &mdash; the raw payload stored as the
-     * externalized object.
-     *
-     * @param value the Avro record to serialize
-     * @param <V>   the Avro record type
-     * @return the Avro-binary-encoded bytes
-     * @throws IOException if encoding fails
-     */
-    public static <V extends org.apache.avro.specific.SpecificRecordBase> byte[] serialize(V value) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        BinaryEncoder encoder = EncoderFactory.get().binaryEncoder(out, null);
-        DatumWriter<V> writer = new SpecificDatumWriter<V>(value.getSchema());
-
-        writer.write(value, encoder);
-        encoder.flush();
-        return out.toByteArray();
-    }
-
-    /**
      * Intercepts a record on its way to the broker and applies the claim-check logic.
      * <p>
-     * The record value is serialized to Avro binary. If the result is at or below the configured
-     * {@link #SIZE_THRESHOLD_CONFIG size threshold}, the original record is returned unchanged and
-     * stays inline. Otherwise the bytes are stored in the configured bucket (created on demand), and
-     * a new record is returned that keeps the original topic and key but carries a {@code null} value
-     * and the reference as headers.
+     * The record value is serialized to bytes using the configured {@code value.serializer}. If the
+     * result is {@code null} (null value) or at or below the configured {@link #SIZE_THRESHOLD_CONFIG
+     * size threshold}, the original record is returned unchanged and stays inline. Otherwise the
+     * bytes are stored in the configured bucket (created on demand), and a new record is returned
+     * that keeps the original topic and key but carries a {@code null} value and the reference as
+     * headers.
      *
      * @param record the record about to be sent
      * @return the original record (inline) or a header-carrying, null-valued replacement (externalized)
-     * @throws RuntimeException if serialization or the object-store write fails
+     * @throws RuntimeException if the object-store write fails
      */
     @Override
     public ProducerRecord onSend(ProducerRecord<K, V> record) {
-        byte[] bytes = new byte[0];
-        try {
-            bytes = serialize(record.value());
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        // claim-check only kicks in for large payloads; smaller records stay inline on the
-        // topic unchanged (the consumer interceptor passes records without reference headers through)
-        if (bytes.length <= sizeThreshold) {
+        // serialize the opaque value via the producer's configured value serializer; a null value
+        // (or a serializer that yields null) can never be externalized, so pass it through
+        byte[] bytes = valueSerializer.serialize(record.topic(), record.value());
+        if (bytes == null || bytes.length <= sizeThreshold) {
             return record;
         }
 
-        // capture the payload type before the value is dropped; the consumer uses it to resolve the
-        // Avro class for deserialization (resolved against the DTO package by simple name)
-        String payloadType = record.value().getClass().getSimpleName();
+        // record the payload's Java class for traceability (the consumer does not need it: it
+        // reconstructs the value with the configured value.deserializer)
+        String payloadType = record.value() != null ? record.value().getClass().getName() : "";
 
         ByteArrayInputStream stream = new ByteArrayInputStream(bytes);
 
         ObjectMetadata meta = new ObjectMetadata();
         meta.setContentLength(bytes.length);
-        meta.setContentType("application/avro-binary");
+        meta.setContentType("application/octet-stream");
         // attach the Kafka context available at produce time as S3 user metadata (x-amz-meta-*).
         // Note: offset is unknown here (not yet appended) and partition/timestamp are only present
         // if the application set them explicitly - the broker otherwise assigns them after send.
@@ -216,7 +191,9 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
         if (record.key() != null) {
             meta.addUserMetadata("kafka-key", record.key().toString());
         }
-        meta.addUserMetadata("payload-class", record.value().getClass().getName());
+        if (!payloadType.isEmpty()) {
+            meta.addUserMetadata("payload-class", payloadType);
+        }
         meta.addUserMetadata("payload-size-bytes", Integer.toString(bytes.length));
 
         // the (optionally regex-transformed) topic name feeds the ${topic} placeholder in the
@@ -259,16 +236,21 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
     }
 
     /**
-     * {@inheritDoc}
+     * Closes the value serializer this interceptor instantiated.
      */
     @Override
     public void close() {
+        if (valueSerializer != null) {
+            valueSerializer.close();
+        }
     }
 
     /**
-     * Reads the interceptor settings from the producer configuration and builds the S3 client used
-     * to store externalized payloads. Missing keys fall back to their defaults. See
-     * {@link ProducerInterceptorToStorage} for the recognized {@code interceptor.storage.*} keys.
+     * Reads the interceptor settings from the producer configuration, builds the S3 client used to
+     * store externalized payloads, and instantiates a private copy of the configured
+     * {@code value.serializer} used to turn record values into the bytes that get stored. Missing
+     * {@code interceptor.storage.*} keys fall back to their defaults. See
+     * {@link ProducerInterceptorToStorage} for the recognized keys.
      *
      * @param configs the producer configuration passed by the Kafka client
      */
@@ -286,6 +268,8 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
         String serviceEndpoint = getOrDefault(configs, SERVICE_ENDPOINT_CONFIG, DEFAULT_SERVICE_ENDPOINT);
         String region = getOrDefault(configs, REGION_CONFIG, DEFAULT_REGION);
 
+        valueSerializer = instantiateValueSerializer(configs);
+
         AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
 
         s3client = AmazonS3ClientBuilder
@@ -294,6 +278,28 @@ public class ProducerInterceptorToStorageHeaders<K,V extends org.apache.avro.spe
                 .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
                 .withPathStyleAccessEnabled(true)
                 .build();
+    }
+
+    /**
+     * Instantiates and configures a copy of the producer's {@code value.serializer} so the
+     * interceptor can serialize opaque values to the bytes it stores. The value is accepted either
+     * as a {@link Class} or as a class-name {@link String} (both forms Kafka may put in the config).
+     */
+    @SuppressWarnings("unchecked")
+    private static Serializer<Object> instantiateValueSerializer(final Map<String, ?> configs) {
+        Object configured = configs.get(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG);
+        if (configured == null) {
+            throw new IllegalStateException(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG
+                    + " must be configured for " + ProducerInterceptorToStorageHeaders.class.getName());
+        }
+        try {
+            Class<?> clazz = configured instanceof Class ? (Class<?>) configured : Class.forName(configured.toString());
+            Serializer<Object> serializer = (Serializer<Object>) clazz.getDeclaredConstructor().newInstance();
+            serializer.configure(configs, false);
+            return serializer;
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Could not instantiate value serializer " + configured, e);
+        }
     }
 
     /**

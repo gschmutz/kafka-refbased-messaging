@@ -1,34 +1,40 @@
 package com.trivadis.kafkaws.refbased.interceptor;
 
 import com.amazonaws.services.s3.model.S3Object;
-import com.trivadis.demo.dto.ObjectReference;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Tests the serializer-agnostic header variant using a plain {@link StringDeserializer} payload (no
+ * Avro) to demonstrate that the interceptor treats the stored bytes as opaque.
+ */
 class ConsumerInterceptorToStorageHeadersTest {
 
-    private ObjectReference payload() {
-        return ObjectReference.newBuilder()
-                .setTs(Instant.ofEpochMilli(123))
-                .setPayloadType("Person")
-                .setBucketName("pb")
-                .setObjectName("po")
-                .build();
+    private ConsumerInterceptorToStorageHeaders<Long, Object> configured(FakeAmazonS3 s3) {
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = new ConsumerInterceptorToStorageHeaders<>();
+        interceptor.configure(cfg);
+        TestSupport.setField(interceptor, "s3client", s3);
+        return interceptor;
     }
 
     private static ConsumerRecords<Long, Object> singleton(ConsumerRecord<Long, Object> record) {
@@ -40,8 +46,7 @@ class ConsumerInterceptorToStorageHeadersTest {
     @Test
     void recordsWithoutReferenceHeadersArePassedThrough() {
         FakeAmazonS3 s3 = new FakeAmazonS3();
-        ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = new ConsumerInterceptorToStorageHeaders<>();
-        TestSupport.setField(interceptor, "s3client", s3);
+        ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = configured(s3);
 
         ConsumerRecord<Long, Object> record = new ConsumerRecord<>("t", 0, 0L, 1L, "just-a-string");
 
@@ -55,9 +60,8 @@ class ConsumerInterceptorToStorageHeadersTest {
     }
 
     @Test
-    void referenceRecordsAreMaterializedFromHeaders() throws Exception {
-        ObjectReference storedPayload = payload();
-        byte[] bytes = ProducerInterceptorToStorageHeaders.serialize(storedPayload);
+    void referenceRecordsAreMaterializedFromHeaders() {
+        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
 
         S3Object s3o = new S3Object();
         s3o.setBucketName("bucket");
@@ -67,25 +71,23 @@ class ConsumerInterceptorToStorageHeadersTest {
         FakeAmazonS3 s3 = new FakeAmazonS3();
         s3.getResponse = s3o;
 
-        ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = new ConsumerInterceptorToStorageHeaders<>();
-        TestSupport.setField(interceptor, "s3client", s3);
+        ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = configured(s3);
 
         // a null-valued record carrying the reference as headers, as the producer interceptor emits
         RecordHeaders headers = new RecordHeaders();
         headers.add(ProducerInterceptorToStorageHeaders.HEADER_BUCKET, "bucket".getBytes(StandardCharsets.UTF_8));
         headers.add(ProducerInterceptorToStorageHeaders.HEADER_OBJECT, "key123".getBytes(StandardCharsets.UTF_8));
-        // resolved against ObjectReference's package
-        headers.add(ProducerInterceptorToStorageHeaders.HEADER_PAYLOAD_TYPE, "ObjectReference".getBytes(StandardCharsets.UTF_8));
+        headers.add(ProducerInterceptorToStorageHeaders.HEADER_PAYLOAD_TYPE, "java.lang.String".getBytes(StandardCharsets.UTF_8));
         headers.add(ProducerInterceptorToStorageHeaders.HEADER_TS, "123".getBytes(StandardCharsets.UTF_8));
 
         ConsumerRecord<Long, Object> record = new ConsumerRecord<>(
-                "t", 0, 5L, 9L, org.apache.kafka.common.record.TimestampType.CREATE_TIME,
-                -1, -1, 9L, (Object) null, headers, java.util.Optional.empty());
+                "t", 0, 5L, 9L, TimestampType.CREATE_TIME,
+                -1, -1, 9L, (Object) null, headers, Optional.empty());
 
         ConsumerRecords<Long, Object> out = interceptor.onConsume(singleton(record));
 
         ConsumerRecord<Long, Object> materialized = out.iterator().next();
-        assertEquals(storedPayload, materialized.value());
+        assertEquals("hello", materialized.value());
         // metadata is preserved; only the value is replaced
         assertEquals(5L, materialized.offset());
         assertEquals(Long.valueOf(9L), materialized.key());
