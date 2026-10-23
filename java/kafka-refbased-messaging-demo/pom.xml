@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>2.6.4</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+    <groupId>com.trivadis.demo.refbasedmsg</groupId>
+    <artifactId>kafka-refbased-messaging-demo</artifactId>
+    <version>1.1-SNAPSHOT</version>
+    <packaging>jar</packaging>
+	<description>Demo for Kafka Reference-Based Messaging using the interceptor library</description>
+	<properties>
+		<java.version>11</java.version>
+		<confluent.version>6.2.0</confluent.version>
+		<spring-cloud-aws-version>2.4.1</spring-cloud-aws-version>
+		<avro.version>1.10.1</avro.version>
+	</properties>
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.kafka</groupId>
+			<artifactId>spring-kafka</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>io.awspring.cloud</groupId>
+			<artifactId>spring-cloud-aws-context</artifactId>
+			<version>${spring-cloud-aws-version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.amazonaws</groupId>
+			<artifactId>aws-java-sdk</artifactId>
+			<version>1.12.195</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.github.javafaker</groupId>
+			<artifactId>javafaker</artifactId>
+			<version>1.0.2</version>
+		</dependency>
+
+		<!-- reusable Reference-Based Messaging interceptors + ObjectReference contract -->
+		<dependency>
+			<groupId>com.trivadis.kafkaws</groupId>
+			<artifactId>kafka-refbased-messaging</artifactId>
+			<version>1.1-SNAPSHOT</version>
+		</dependency>
+
+		<!-- demo payload DTOs (Person/Product) generated from src/main/avdl -->
+		<dependency>
+			<groupId>org.apache.avro</groupId>
+			<artifactId>avro</artifactId>
+			<version>${avro.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>io.confluent</groupId>
+			<artifactId>kafka-avro-serializer</artifactId>
+			<version>${confluent.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.kafka</groupId>
+			<artifactId>spring-kafka-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+
+			<!-- generate the Person/Product DTOs from the Avro IDL -->
+			<plugin>
+				<groupId>org.apache.avro</groupId>
+				<artifactId>avro-maven-plugin</artifactId>
+				<version>${avro.version}</version>
+				<executions>
+					<execution>
+						<id>schemas</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>idl-protocol</goal>
+						</goals>
+						<configuration>
+							<stringType>String</stringType>
+							<sourceDirectory>${project.basedir}/src/main/avdl</sourceDirectory>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!-- also emit Person.avsc/Product.avsc for the schema-registry registration below -->
+			<plugin>
+				<groupId>com.trivadis.plugins</groupId>
+				<artifactId>avdl2avsc-maven-plugin</artifactId>
+				<version>1.0.1-SNAPSHOT</version>
+				<executions>
+					<execution>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>genschema</goal>
+						</goals>
+						<configuration>
+							<inputAvdlDirectory>${basedir}/src/main/avdl</inputAvdlDirectory>
+							<outputSchemaDirectory>${basedir}/target/generated-sources/avro/schema</outputSchemaDirectory>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+            <plugin>
+                <groupId>io.confluent</groupId>
+                <artifactId>kafka-schema-registry-maven-plugin</artifactId>
+                <version>7.0.0</version>
+                <configuration>
+                    <schemaRegistryUrls>
+                        <param>http://${env.DATAPLATFORM_IP}:8081</param>
+                    </schemaRegistryUrls>
+                    <subjects>
+                        <!-- TopicRecordNameStrategy subject: the ObjectReference now shares the
+                             original <topic> with the payload schema (no separate -refb topic) -->
+                        <person-com.trivadis.demo.dto.ObjectReference>
+                            ../kafka-refbased-messaging/target/generated-sources/avro/schema/ObjectReference.avsc
+                        </person-com.trivadis.demo.dto.ObjectReference>
+                        <person-com.trivadis.demo.dto.Person>
+                            target/generated-sources/avro/schema/Person.avsc
+                        </person-com.trivadis.demo.dto.Person>
+                    </subjects>
+                </configuration>
+                <goals>
+                    <goal>register</goal>
+                </goals>
+
+            </plugin>			
+		</plugins>
+	</build>
+
+	<repositories>
+		<repository>
+			<id>confluent</id>
+			<url>https://packages.confluent.io/maven/</url>
+		</repository>
+		<repository>
+			<id>Trivadis Maven Repo</id>
+			<url>https://github.com/TrivadisPF/avdl2avsc-maven-plugin/raw/mvn-repo/</url>
+			<snapshots>
+				<enabled>true</enabled>
+				<updatePolicy>always</updatePolicy>
+			</snapshots>
+		</repository>
+	</repositories>
+	<pluginRepositories>
+		<pluginRepository>
+			<id>confluent</id>
+			<url>https://packages.confluent.io/maven/</url>
+		</pluginRepository>
+		<pluginRepository>
+			<id>Trivadis Maven Repo</id>
+			<url>https://github.com/TrivadisPF/avdl2avsc-maven-plugin/raw/mvn-repo/</url>
+			<snapshots>
+				<enabled>true</enabled>
+				<updatePolicy>always</updatePolicy>
+			</snapshots>
+		</pluginRepository>
+	</pluginRepositories>
+</project>

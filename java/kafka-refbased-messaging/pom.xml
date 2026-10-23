@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.trivadis.kafkaws</groupId>
+    <artifactId>kafka-refbased-messaging</artifactId>
+    <version>1.1-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>kafka-refbased-messaging</name>
+    <description>Reusable Kafka producer/consumer interceptors implementing Reference-Based Messaging
+        (Claim Check): large Avro payloads are externalized to object storage (S3/MinIO) and only a
+        lightweight ObjectReference is sent through Kafka.</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <avro.version>1.10.1</avro.version>
+        <kafka.version>3.0.0</kafka.version>
+        <aws.sdk.version>1.12.195</aws.sdk.version>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+        </repository>
+        <repository>
+            <id>Trivadis Maven Repo</id>
+            <url>https://github.com/TrivadisPF/avdl2avsc-maven-plugin/raw/mvn-repo/</url>
+            <snapshots>
+                <enabled>true</enabled>
+                <updatePolicy>always</updatePolicy>
+            </snapshots>
+        </repository>
+    </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>Trivadis Maven Repo</id>
+            <url>https://github.com/TrivadisPF/avdl2avsc-maven-plugin/raw/mvn-repo/</url>
+            <snapshots>
+                <enabled>true</enabled>
+                <updatePolicy>always</updatePolicy>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
+
+    <dependencies>
+        <!-- ObjectReference DTO is generated from src/main/avdl at build time -->
+        <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
+            <version>${avro.version}</version>
+        </dependency>
+
+        <!-- Kafka interceptor API - provided by the host application at runtime -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>${kafka.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Object storage client (S3 / MinIO) -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-s3</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+
+        <!-- test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.8.2</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- generate the ObjectReference Java classes from the Avro IDL -->
+            <plugin>
+                <groupId>org.apache.avro</groupId>
+                <artifactId>avro-maven-plugin</artifactId>
+                <version>${avro.version}</version>
+                <executions>
+                    <execution>
+                        <id>schemas</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>idl-protocol</goal>
+                        </goals>
+                        <configuration>
+                            <stringType>String</stringType>
+                            <sourceDirectory>${project.basedir}/src/main/avdl</sourceDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- also emit ObjectReference.avsc (used by the demo's schema-registry registration) -->
+            <plugin>
+                <groupId>com.trivadis.plugins</groupId>
+                <artifactId>avdl2avsc-maven-plugin</artifactId>
+                <version>1.0.1-SNAPSHOT</version>
+                <executions>
+                    <execution>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>genschema</goal>
+                        </goals>
+                        <configuration>
+                            <inputAvdlDirectory>${basedir}/src/main/avdl</inputAvdlDirectory>
+                            <outputSchemaDirectory>${basedir}/target/generated-sources/avro/schema</outputSchemaDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.22.2</version>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

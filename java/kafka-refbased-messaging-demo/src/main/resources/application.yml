@@ -1,0 +1,55 @@
+topic:
+  name: person
+  replication-factor: 3
+  partitions: 8
+
+spring:
+  kafka:
+    bootstrap-servers:
+      - ${DATAPLATFORM_IP}:9092
+      - ${DATAPLATFORM_IP}:9093
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.LongSerializer
+      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      properties:
+        auto.register.schemas: false
+        use.latest.version: true
+        value.subject.name.strategy: io.confluent.kafka.serializers.subject.TopicRecordNameStrategy
+        interceptor.classes: com.trivadis.kafkaws.refbased.interceptor.ProducerInterceptorToStorage
+        interceptor.storage.bucket.name: refbased-messaging-bucket
+        # optional key prefix ("folder") the externalized objects are stored under
+        interceptor.storage.object.prefix: ${topic}
+        # optional time-based partitioning for retention: none | monthly | daily | hourly
+        interceptor.storage.partition.granularity: daily
+        # only externalize payloads larger than this many bytes; small Person records stay inline,
+        # the padded "large" ones from the demo producer exceed this and are stored in S3
+        interceptor.storage.size.threshold.bytes: 1024
+        interceptor.storage.access.key: admin
+        interceptor.storage.secret.key: abc123abc123!
+        interceptor.storage.service.endpoint: http://${DATAPLATFORM_IP}:9005
+        interceptor.storage.region: us-east-2
+    consumer:
+      group-id: refbased-consumer
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.LongDeserializer
+      value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+      properties:
+        specific.avro.reader: true
+        interceptor.classes: com.trivadis.kafkaws.refbased.interceptor.ConsumerInterceptorToStorage
+        interceptor.storage.access.key: admin
+        interceptor.storage.secret.key: abc123abc123!
+        interceptor.storage.service.endpoint: http://${DATAPLATFORM_IP}:9005
+        interceptor.storage.region: us-east-2
+    properties:
+      schema.registry.url: http://${DATAPLATFORM_IP}:8081
+
+cloud:
+  aws:
+    credentials:
+      accessKey: admin
+      secretKey: abc123abc123!
+    region.static: us-east-1
+
+producer-app:
+  aws:
+    service-endpoint: http://${DATAPLATFORM_IP}:9005
