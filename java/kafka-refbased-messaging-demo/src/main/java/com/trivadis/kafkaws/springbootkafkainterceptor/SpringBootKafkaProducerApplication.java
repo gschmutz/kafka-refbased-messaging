@@ -1,23 +1,14 @@
 package com.trivadis.kafkaws.springbootkafkainterceptor;
 
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.s3.model.PutObjectResult;
 import com.github.javafaker.Faker;
-import com.trivadis.demo.dto.ObjectReference;
 import com.trivadis.demo.dto.Person;
-import com.trivadis.demo.dto.Product;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import java.io.ByteArrayInputStream;
-import java.net.URL;
-import java.time.Instant;
 import java.util.UUID;
 
 @SpringBootApplication
@@ -81,12 +72,3 @@ public class SpringBootKafkaProducerApplication implements CommandLineRunner {
 }
 
 
-class S3Object {
-	public String bucketName;
-	public String objectName;
-
-	public S3Object(String bucketName, String objectName) {
-		this.bucketName = bucketName;
-		this.objectName = objectName;
-	}
-}

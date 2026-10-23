@@ -11,7 +11,7 @@
     <name>kafka-refbased-messaging</name>
     <description>Reusable Kafka producer/consumer interceptors implementing Reference-Based Messaging
         (Claim Check): large Avro payloads are externalized to object storage (S3/MinIO) and only a
-        lightweight ObjectReference is sent through Kafka.</description>
+        lightweight ClaimCheck is sent through Kafka.</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -48,7 +48,7 @@
     </pluginRepositories>
 
     <dependencies>
-        <!-- ObjectReference DTO is generated from src/main/avdl at build time -->
+        <!-- ClaimCheck DTO is generated from src/main/avdl at build time -->
         <dependency>
             <groupId>org.apache.avro</groupId>
             <artifactId>avro</artifactId>
@@ -81,7 +81,7 @@
 
     <build>
         <plugins>
-            <!-- generate the ObjectReference Java classes from the Avro IDL -->
+            <!-- generate the ClaimCheck Java classes from the Avro IDL -->
             <plugin>
                 <groupId>org.apache.avro</groupId>
                 <artifactId>avro-maven-plugin</artifactId>
@@ -101,7 +101,7 @@
                 </executions>
             </plugin>
 
-            <!-- also emit ObjectReference.avsc (used by the demo's schema-registry registration) -->
+            <!-- also emit ClaimCheck.avsc (used by the demo's schema-registry registration) -->
             <plugin>
                 <groupId>com.trivadis.plugins</groupId>
                 <artifactId>avdl2avsc-maven-plugin</artifactId>

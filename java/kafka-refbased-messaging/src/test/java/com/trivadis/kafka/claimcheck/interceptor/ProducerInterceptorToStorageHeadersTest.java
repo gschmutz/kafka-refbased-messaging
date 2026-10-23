@@ -1,6 +1,7 @@
 package com.trivadis.kafka.claimcheck.interceptor;
 
 import com.trivadis.kafka.claimcheck.interceptor.metrics.ProducerInterceptorMetricsMBean;
+import com.trivadis.kafka.claimcheck.storage.S3StorageBackend;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Header;
@@ -23,12 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ProducerInterceptorToStorageHeadersTest {
 
-    /** Configure the interceptor, then replace its internally-built S3 client with the given fake. */
+    /** Configure the interceptor, then replace the S3 client inside its storage backend with the fake. */
     private ProducerInterceptorToStorageHeaders<Long, String> configured(Map<String, Object> cfg, FakeAmazonS3 s3) {
         cfg.putIfAbsent(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         ProducerInterceptorToStorageHeaders<Long, String> interceptor = new ProducerInterceptorToStorageHeaders<>();
         interceptor.configure(cfg);
-        TestSupport.setField(interceptor, "s3client", s3);
+        TestSupport.setField(TestSupport.getField(interceptor, "storage"), "s3client", s3);
         return interceptor;
     }
 
@@ -56,25 +57,23 @@ class ProducerInterceptorToStorageHeadersTest {
 
         Map<String, Object> cfg = new HashMap<>();
         cfg.put(ProducerInterceptorToStorageHeaders.SIZE_THRESHOLD_CONFIG, "0"); // externalize everything
-        cfg.put(ProducerInterceptorToStorageHeaders.BUCKET_NAME_CONFIG, "bucket");
+        cfg.put(S3StorageBackend.BUCKET_NAME_CONFIG, "bucket");
         ProducerInterceptorToStorageHeaders<Long, String> i = configured(cfg, s3);
 
         ProducerRecord<?, ?> result = i.onSend(new ProducerRecord<>("mytopic", 7L, "hello"));
 
-        // same topic and key, value dropped to null, reference carried in headers
+        // same topic and key, value dropped to null, reference carried in a single header
         assertEquals("mytopic", result.topic());
         assertEquals(Long.valueOf(7L), result.key());
         assertNull(result.value());
 
-        assertEquals("bucket", header(result, ProducerInterceptorToStorageHeaders.HEADER_BUCKET));
-        assertNotNull(header(result, ProducerInterceptorToStorageHeaders.HEADER_OBJECT));
+        assertEquals("s3://bucket/" + s3.putKey, header(result, ProducerInterceptorToStorageHeaders.HEADER_REFERENCE));
         // payload type header carries the value's Java class name (informational)
         assertEquals("java.lang.String", header(result, ProducerInterceptorToStorageHeaders.HEADER_PAYLOAD_TYPE));
         assertNotNull(header(result, ProducerInterceptorToStorageHeaders.HEADER_TS));
 
         assertEquals(1, s3.putCount);
         assertEquals("bucket", s3.putBucket);
-        assertEquals(header(result, ProducerInterceptorToStorageHeaders.HEADER_OBJECT), s3.putKey);
 
         ProducerInterceptorMetricsMBean m = (ProducerInterceptorMetricsMBean) TestSupport.getField(i, "metrics");
         assertEquals(1, m.getRecordsExternalized());
@@ -111,7 +110,7 @@ class ProducerInterceptorToStorageHeadersTest {
         ProducerRecord<?, ?> result = i.onSend(record);
 
         assertEquals("1.1", header(result, "message-version"));
-        assertNotNull(header(result, ProducerInterceptorToStorageHeaders.HEADER_BUCKET));
+        assertNotNull(header(result, ProducerInterceptorToStorageHeaders.HEADER_REFERENCE));
     }
 
     @Test
@@ -120,15 +119,14 @@ class ProducerInterceptorToStorageHeadersTest {
 
         Map<String, Object> cfg = new HashMap<>();
         cfg.put(ProducerInterceptorToStorageHeaders.SIZE_THRESHOLD_CONFIG, "0");
-        cfg.put(ProducerInterceptorToStorageHeaders.BUCKET_NAME_CONFIG, "bucket");
+        cfg.put(S3StorageBackend.BUCKET_NAME_CONFIG, "bucket");
         ProducerInterceptorToStorageHeaders<Long, String> i = configured(cfg, s3);
 
         i.onSend(new ProducerRecord<>("mytopic", 7L, "hello"));
 
+        // the storage backend only sees the serialized bytes, so it records topic and size
         Map<String, String> um = s3.putMetadata.getUserMetadata();
         assertEquals("mytopic", um.get("kafka-topic"));
-        assertEquals("7", um.get("kafka-key"));
-        assertEquals("java.lang.String", um.get("payload-class"));
         assertNotNull(um.get("payload-size-bytes"));
     }
 }

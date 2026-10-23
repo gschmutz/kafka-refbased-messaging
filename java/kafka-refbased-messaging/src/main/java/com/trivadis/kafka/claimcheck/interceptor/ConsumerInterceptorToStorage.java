@@ -1,19 +1,12 @@
 package com.trivadis.kafka.claimcheck.interceptor;
 
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.regions.Regions;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.services.s3.model.S3ObjectInputStream;
-import com.amazonaws.util.IOUtils;
-import com.trivadis.demo.dto.ObjectReference;
+import com.trivadis.demo.dto.ClaimCheck;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetrics;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetricsMBean;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.JmxMetrics;
+import com.trivadis.kafka.claimcheck.storage.S3StorageBackend;
+import com.trivadis.kafka.claimcheck.storage.StorageBackend;
+import com.trivadis.kafka.claimcheck.storage.StorageReference;
 import org.apache.avro.io.BinaryDecoder;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.DecoderFactory;
@@ -37,34 +30,34 @@ import javax.management.ObjectName;
  * Kafka {@link ConsumerInterceptor} that reverses the Reference-Based Messaging (Claim Check)
  * applied by {@code ProducerInterceptorToStorage}.
  * <p>
- * The producer interceptor externalizes large Avro payloads to an S3-compatible object store and
- * puts a lightweight {@link ObjectReference} on the topic in their place, while leaving small
- * payloads inline. On the way out of the consumer, this interceptor inspects each record:
+ * The producer interceptor externalizes large Avro payloads to an object store and puts a lightweight
+ * {@link ClaimCheck} on the topic in their place, while leaving small payloads inline. On the way out
+ * of the consumer, this interceptor inspects each record:
  * <ul>
- *   <li>if the value is an {@link ObjectReference}, it fetches the referenced object from storage,
- *       deserializes it back into the original Avro record, and substitutes that as the record
- *       value &mdash; so application code never sees the reference;</li>
+ *   <li>if the value is an {@link ClaimCheck}, it fetches the referenced object through a
+ *       {@link StorageBackend} (by default {@link S3StorageBackend}), deserializes it back into the
+ *       original Avro record, and substitutes that as the record value &mdash; so application code
+ *       never sees the reference;</li>
  *   <li>otherwise the record was never externalized and is passed through unchanged.</li>
  * </ul>
  * Because it runs transparently via {@code interceptor.classes}, consumers receive the materialized
  * payload (e.g. a {@code Person}) regardless of whether it travelled inline or through storage.
  * <p>
- * <strong>Payload type resolution.</strong> The Avro bytes stored in S3 carry no Schema Registry
- * framing, so the writer type is recovered from {@link ObjectReference#getPayloadType() payloadType}:
- * a simple name (e.g. {@code "Person"}) is resolved against the package of {@link ObjectReference},
- * while a fully-qualified name is used as-is. The payload classes must therefore be on the
- * consumer's classpath.
+ * All object-storage mechanics (S3 client, fetching by the {@code s3://bucket/key} reference URI)
+ * live in the {@link StorageBackend}; this interceptor only resolves the Avro payload type and
+ * deserializes the fetched bytes.
  * <p>
- * <strong>Configuration.</strong> The object-store connection is read from the consumer
- * configuration (the map passed to {@link #configure(Map)}); each key has a default:
- * <ul>
- *   <li>{@link #SERVICE_ENDPOINT_CONFIG} &ndash; object-store endpoint URL</li>
- *   <li>{@link #REGION_CONFIG} &ndash; signing region</li>
- *   <li>{@link #ACCESS_KEY_CONFIG} / {@link #SECRET_KEY_CONFIG} &ndash; object-store credentials</li>
- * </ul>
- * These mirror the producer-side {@code interceptor.storage.*} keys. Note there is no size
- * threshold here &mdash; whether to externalize is a producer-only decision; the consumer reacts to
- * the record value type.
+ * <strong>Payload type resolution.</strong> The Avro bytes stored in the object store carry no Schema
+ * Registry framing, so the writer type is recovered from {@link ClaimCheck#getPayloadType()
+ * payloadType}: a simple name (e.g. {@code "Person"}) is resolved against the package of
+ * {@link ClaimCheck}, while a fully-qualified name is used as-is. The payload classes must therefore
+ * be on the consumer's classpath.
+ * <p>
+ * <strong>Configuration.</strong> The object-store connection is read by the {@link StorageBackend}
+ * from the consumer configuration (the map passed to {@link #configure(Map)}); see
+ * {@link S3StorageBackend} for the recognized {@code interceptor.storage.*} keys. Note there is no
+ * size threshold here &mdash; whether to externalize is a producer-only decision; the consumer reacts
+ * to the record value type.
  * <p>
  * <strong>Monitoring.</strong> Behaviour counters (records materialized / passed through, bytes
  * fetched, errors) are exposed as a JMX MBean under
@@ -72,34 +65,21 @@ import javax.management.ObjectName;
  * {@link ConsumerInterceptorMetricsMBean}.
  *
  * @param <K> record key type
- * @param <V> record value type (the materialized payload, or {@link ObjectReference} on the wire)
+ * @param <V> record value type (the materialized payload, or {@link ClaimCheck} on the wire)
  */
 public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K, V> {
-    /** Consumer config key used to configure the S3 access key. */
-    public static final String ACCESS_KEY_CONFIG = "interceptor.storage.access.key";
-    /** Consumer config key used to configure the S3 secret key. */
-    public static final String SECRET_KEY_CONFIG = "interceptor.storage.secret.key";
-    /** Consumer config key used to configure the S3 service endpoint. */
-    public static final String SERVICE_ENDPOINT_CONFIG = "interceptor.storage.service.endpoint";
-    /** Consumer config key used to configure the S3 signing region. */
-    public static final String REGION_CONFIG = "interceptor.storage.region";
 
-    private static final String DEFAULT_ACCESS_KEY = "admin";
-    private static final String DEFAULT_SECRET_KEY = "abc123abc123!";
-    private static final String DEFAULT_SERVICE_ENDPOINT = "http://dataplatform:9005";
-    private static final String DEFAULT_REGION = Regions.US_EAST_2.getName();
-
-    private AmazonS3 s3client;
+    private StorageBackend storage;
     private final ConsumerInterceptorMetrics metrics = new ConsumerInterceptorMetrics();
     private ObjectName metricsName;
 
-    // DTOs are generated into the same package as ObjectReference (e.g. com.trivadis.demo.dto)
-    private static final String DTO_PACKAGE = ObjectReference.class.getPackage().getName();
+    // DTOs are generated into the same package as ClaimCheck (e.g. com.trivadis.demo.dto)
+    private static final String DTO_PACKAGE = ClaimCheck.class.getPackage().getName();
 
     /**
      * Resolves the Avro payload class from the {@code payloadType} carried on the reference. A value
      * containing a dot is treated as a fully-qualified class name; otherwise it is resolved as a
-     * simple name within the package of {@link ObjectReference}.
+     * simple name within the package of {@link ClaimCheck}.
      *
      * @param payloadType simple or fully-qualified payload type name
      * @return the resolved Avro specific-record class
@@ -134,9 +114,9 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
 
     /**
      * Materializes any externalized payloads in the polled batch before the records reach the
-     * application. Reference-carrying records are rehydrated from storage; all others are passed
-     * through unchanged. Partition/offset/key/headers/timestamp metadata is preserved; only the
-     * value of a reference record is replaced.
+     * application. Reference-carrying records are rehydrated through the {@link StorageBackend}; all
+     * others are passed through unchanged. Partition/offset/key/headers/timestamp metadata is
+     * preserved; only the value of a reference record is replaced.
      *
      * @param records the records returned by the poll
      * @return a new batch with references resolved to their original payloads
@@ -148,20 +128,20 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
         records.forEach(r -> {
             TopicPartition tp = new TopicPartition(r.topic(), r.partition());
 
-            // only records carrying an ObjectReference were externalized; smaller payloads were
+            // only records carrying an ClaimCheck were externalized; smaller payloads were
             // left inline by the producer interceptor and are passed through unchanged
-            if (!(r.value() instanceof ObjectReference)) {
+            if (!(r.value() instanceof ClaimCheck)) {
                 metrics.recordPassThrough();
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(r);
                 return;
             }
 
-            // retrieve Blob referenced by the ObjectReference
-            ObjectReference be = (ObjectReference) r.value();
+            // fetch the externalized bytes through the storage backend (the reference is a
+            // s3://bucket/key URI the backend knows how to resolve)
+            ClaimCheck be = (ClaimCheck) r.value();
             try {
-                S3Object s3object = s3client.getObject(be.getBucketName(), be.getObjectName());
-                byte[] byteArray = IOUtils.toByteArray(s3object.getObjectContent());
-                // resolve the payload type from the payloadType field of the ObjectReference
+                byte[] byteArray = storage.checkOut(new StorageReference(be.getPayloadReference().toString()));
+                // resolve the payload type from the payloadType field of the ClaimCheck
                 Class<? extends SpecificRecordBase> payloadClass = resolvePayloadClass(be.getPayloadType().toString());
                 SpecificRecordBase srb = deserialize(byteArray, payloadClass);
                 metrics.recordMaterialized(byteArray.length);
@@ -198,34 +178,27 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
         // close connection to S3
     }
 
+    /**
+     * Unregisters the metrics MBean and closes the storage backend.
+     */
     @Override
     public void close() {
         JmxMetrics.unregister(metricsName);
+        if (storage != null) {
+            storage.close();
+        }
     }
 
     /**
-     * Reads the object-store settings from the consumer configuration and builds the S3 client used
-     * to fetch externalized payloads. Missing keys fall back to their defaults. See the class-level
-     * documentation for the recognized {@code interceptor.storage.*} keys.
+     * Creates / configures the {@link StorageBackend} (which reads the {@code interceptor.storage.*}
+     * keys from the consumer configuration) and registers the metrics MBean.
      *
      * @param map the consumer configuration passed by the Kafka client
      */
     @Override
     public void configure(Map<String, ?> map) {
-        String accessKey = getOrDefault(map, ACCESS_KEY_CONFIG, DEFAULT_ACCESS_KEY);
-        String secretKey = getOrDefault(map, SECRET_KEY_CONFIG, DEFAULT_SECRET_KEY);
-        String serviceEndpoint = getOrDefault(map, SERVICE_ENDPOINT_CONFIG, DEFAULT_SERVICE_ENDPOINT);
-        String region = getOrDefault(map, REGION_CONFIG, DEFAULT_REGION);
-
-        AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
-
-        s3client = AmazonS3ClientBuilder
-                .standard()
-                .withCredentials(new AWSStaticCredentialsProvider(credentials))
-                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
-                .withPathStyleAccessEnabled(true)
-                .build();
-
+        storage = new S3StorageBackend();
+        storage.configure(map);
         metricsName = JmxMetrics.register(metrics, "ConsumerInterceptor", getOrDefault(map, "client.id", ""));
     }
 

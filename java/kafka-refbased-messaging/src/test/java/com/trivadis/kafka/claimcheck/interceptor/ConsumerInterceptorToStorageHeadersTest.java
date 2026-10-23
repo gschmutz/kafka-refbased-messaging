@@ -34,7 +34,7 @@ class ConsumerInterceptorToStorageHeadersTest {
         cfg.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = new ConsumerInterceptorToStorageHeaders<>();
         interceptor.configure(cfg);
-        TestSupport.setField(interceptor, "s3client", s3);
+        TestSupport.setField(TestSupport.getField(interceptor, "storage"), "s3client", s3);
         return interceptor;
     }
 
@@ -78,10 +78,9 @@ class ConsumerInterceptorToStorageHeadersTest {
 
         ConsumerInterceptorToStorageHeaders<Long, Object> interceptor = configured(s3);
 
-        // a null-valued record carrying the reference as headers, as the producer interceptor emits
+        // a null-valued record carrying the reference as a single header, as the producer emits
         RecordHeaders headers = new RecordHeaders();
-        headers.add(ProducerInterceptorToStorageHeaders.HEADER_BUCKET, "bucket".getBytes(StandardCharsets.UTF_8));
-        headers.add(ProducerInterceptorToStorageHeaders.HEADER_OBJECT, "key123".getBytes(StandardCharsets.UTF_8));
+        headers.add(ProducerInterceptorToStorageHeaders.HEADER_REFERENCE, "s3://bucket/key123".getBytes(StandardCharsets.UTF_8));
         headers.add(ProducerInterceptorToStorageHeaders.HEADER_PAYLOAD_TYPE, "java.lang.String".getBytes(StandardCharsets.UTF_8));
         headers.add(ProducerInterceptorToStorageHeaders.HEADER_TS, "123".getBytes(StandardCharsets.UTF_8));
 

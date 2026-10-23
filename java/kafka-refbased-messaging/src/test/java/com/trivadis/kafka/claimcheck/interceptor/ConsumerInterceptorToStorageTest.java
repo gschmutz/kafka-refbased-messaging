@@ -1,7 +1,7 @@
 package com.trivadis.kafka.claimcheck.interceptor;
 
 import com.amazonaws.services.s3.model.S3Object;
-import com.trivadis.demo.dto.ObjectReference;
+import com.trivadis.demo.dto.ClaimCheck;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetricsMBean;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -22,12 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConsumerInterceptorToStorageTest {
 
-    private ObjectReference payload() {
-        return ObjectReference.newBuilder()
+    private ClaimCheck payload() {
+        return ClaimCheck.newBuilder()
                 .setTs(Instant.ofEpochMilli(123))
                 .setPayloadType("Person")
-                .setBucketName("pb")
-                .setObjectName("po")
+                .setPayloadReference("s3://pb/po")
                 .build();
     }
 
@@ -37,12 +36,20 @@ class ConsumerInterceptorToStorageTest {
         return new ConsumerRecords<>(map);
     }
 
+    /** Configure the interceptor, then replace the S3 client inside its storage backend with the fake. */
+    private ConsumerInterceptorToStorage<Long, Object> configured(FakeAmazonS3 s3) {
+        ConsumerInterceptorToStorage<Long, Object> interceptor = new ConsumerInterceptorToStorage<>();
+        interceptor.configure(new HashMap<>());
+        TestSupport.setField(TestSupport.getField(interceptor, "storage"), "s3client", s3);
+        return interceptor;
+    }
+
     @Test
     void deserializeRoundTripsProducerSerialization() throws Exception {
-        ObjectReference original = payload();
+        ClaimCheck original = payload();
         byte[] bytes = ProducerInterceptorToStorage.serialize(original);
 
-        ObjectReference back = ConsumerInterceptorToStorage.deserialize(bytes, ObjectReference.class);
+        ClaimCheck back = ConsumerInterceptorToStorage.deserialize(bytes, ClaimCheck.class);
 
         assertEquals(original, back);
     }
@@ -50,8 +57,7 @@ class ConsumerInterceptorToStorageTest {
     @Test
     void nonReferenceRecordsArePassedThrough() {
         FakeAmazonS3 s3 = new FakeAmazonS3();
-        ConsumerInterceptorToStorage<Long, Object> interceptor = new ConsumerInterceptorToStorage<>();
-        TestSupport.setField(interceptor, "s3client", s3);
+        ConsumerInterceptorToStorage<Long, Object> interceptor = configured(s3);
 
         ConsumerRecord<Long, Object> record = new ConsumerRecord<>("t", 0, 0L, 1L, "just-a-string");
 
@@ -66,7 +72,7 @@ class ConsumerInterceptorToStorageTest {
 
     @Test
     void referenceRecordsAreMaterializedFromStorage() throws Exception {
-        ObjectReference storedPayload = payload();
+        ClaimCheck storedPayload = payload();
         byte[] bytes = ProducerInterceptorToStorage.serialize(storedPayload);
 
         S3Object s3o = new S3Object();
@@ -77,14 +83,12 @@ class ConsumerInterceptorToStorageTest {
         FakeAmazonS3 s3 = new FakeAmazonS3();
         s3.getResponse = s3o;
 
-        ConsumerInterceptorToStorage<Long, Object> interceptor = new ConsumerInterceptorToStorage<>();
-        TestSupport.setField(interceptor, "s3client", s3);
+        ConsumerInterceptorToStorage<Long, Object> interceptor = configured(s3);
 
-        ObjectReference reference = ObjectReference.newBuilder()
+        ClaimCheck reference = ClaimCheck.newBuilder()
                 .setTs(Instant.now())
-                .setPayloadType("ObjectReference") // resolved against ObjectReference's package
-                .setBucketName("bucket")
-                .setObjectName("key123")
+                .setPayloadType("ClaimCheck") // resolved against ClaimCheck's package
+                .setPayloadReference("s3://bucket/key123")
                 .build();
         ConsumerRecord<Long, Object> record = new ConsumerRecord<>("t", 0, 5L, 9L, reference);
 

@@ -16,7 +16,6 @@
 	<properties>
 		<java.version>11</java.version>
 		<confluent.version>6.2.0</confluent.version>
-		<spring-cloud-aws-version>2.4.1</spring-cloud-aws-version>
 		<avro.version>1.10.1</avro.version>
 	</properties>
 	<dependencies>
@@ -29,17 +28,8 @@
 			<artifactId>spring-kafka</artifactId>
 		</dependency>
 
-		<dependency>
-			<groupId>io.awspring.cloud</groupId>
-			<artifactId>spring-cloud-aws-context</artifactId>
-			<version>${spring-cloud-aws-version}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>com.amazonaws</groupId>
-			<artifactId>aws-java-sdk</artifactId>
-			<version>1.12.195</version>
-		</dependency>
+		<!-- the app no longer touches object storage directly: the interceptor library handles all
+		     S3 access (and brings the AWS SDK in transitively) -->
 
 		<dependency>
 			<groupId>com.github.javafaker</groupId>
@@ -47,7 +37,7 @@
 			<version>1.0.2</version>
 		</dependency>
 
-		<!-- reusable Reference-Based Messaging interceptors + ObjectReference contract -->
+		<!-- reusable Reference-Based Messaging interceptors + ClaimCheck contract -->
 		<dependency>
 			<groupId>com.trivadis.kafkaws</groupId>
 			<artifactId>kafka-refbased-messaging</artifactId>
@@ -134,11 +124,11 @@
                         <param>http://${env.DATAPLATFORM_IP}:8081</param>
                     </schemaRegistryUrls>
                     <subjects>
-                        <!-- TopicRecordNameStrategy subject: the ObjectReference now shares the
+                        <!-- TopicRecordNameStrategy subject: the ClaimCheck now shares the
                              original <topic> with the payload schema (no separate -refb topic) -->
-                        <person-com.trivadis.demo.dto.ObjectReference>
-                            ../kafka-refbased-messaging/target/generated-sources/avro/schema/ObjectReference.avsc
-                        </person-com.trivadis.demo.dto.ObjectReference>
+                        <person-com.trivadis.demo.dto.ClaimCheck>
+                            ../kafka-refbased-messaging/target/generated-sources/avro/schema/ClaimCheck.avsc
+                        </person-com.trivadis.demo.dto.ClaimCheck>
                         <person-com.trivadis.demo.dto.Person>
                             target/generated-sources/avro/schema/Person.avsc
                         </person-com.trivadis.demo.dto.Person>

@@ -1,17 +1,11 @@
 package com.trivadis.kafka.claimcheck.interceptor;
 
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.regions.Regions;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.util.IOUtils;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetrics;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetricsMBean;
 import com.trivadis.kafka.claimcheck.interceptor.metrics.JmxMetrics;
+import com.trivadis.kafka.claimcheck.storage.S3StorageBackend;
+import com.trivadis.kafka.claimcheck.storage.StorageBackend;
+import com.trivadis.kafka.claimcheck.storage.StorageReference;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -23,7 +17,6 @@ import org.apache.kafka.common.serialization.Deserializer;
 
 import javax.management.ObjectName;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,22 +30,23 @@ import java.util.Map;
  * <p>
  * The header-based producer interceptor externalizes large payloads to object storage (as bytes
  * produced by the producer's {@code value.serializer}) and publishes a {@code null}-valued record
- * carrying the reference as Kafka headers, while leaving small payloads inline. On the way out of the
- * consumer, this interceptor inspects each record:
+ * carrying the storage reference as Kafka headers, while leaving small payloads inline. On the way out
+ * of the consumer, this interceptor inspects each record:
  * <ul>
- *   <li>if the {@link ProducerInterceptorToStorageHeaders#HEADER_BUCKET} header is present, it reads
- *       the reference headers, fetches the referenced object from storage, and reconstructs the value
- *       by handing the stored bytes to the consumer's configured {@code value.deserializer} &mdash;
- *       so application code sees the materialized payload instead of a {@code null};</li>
+ *   <li>if the {@link ProducerInterceptorToStorageHeaders#HEADER_REFERENCE} header is present, it
+ *       fetches the referenced object through a {@link StorageBackend} (by default
+ *       {@link S3StorageBackend}) and reconstructs the value by handing the stored bytes to the
+ *       consumer's configured {@code value.deserializer} &mdash; so application code sees the
+ *       materialized payload instead of a {@code null};</li>
  *   <li>otherwise the record was never externalized and is passed through unchanged.</li>
  * </ul>
  * Because reconstruction goes through the configured {@code value.deserializer}, this works for any
  * payload format (Avro, JSON, String, byte[], &hellip;) &mdash; the interceptor contains no
  * type-specific code.
  * <p>
- * <strong>Configuration</strong> adds nothing beyond {@link ConsumerInterceptorToStorage}'s
- * {@code interceptor.storage.*} keys; it additionally reads the standard {@code value.deserializer}
- * the consumer is already configured with.
+ * <strong>Configuration.</strong> The {@code interceptor.storage.*} keys are read by the
+ * {@link StorageBackend} (see {@link S3StorageBackend}); the standard {@code value.deserializer} the
+ * consumer is already configured with is used to reconstruct the value.
  * <p>
  * <strong>Monitoring.</strong> Behaviour counters (records materialized / passed through, bytes
  * fetched, errors) are exposed as a JMX MBean under
@@ -63,32 +57,19 @@ import java.util.Map;
  * @param <V> record value type (opaque; reconstructed via the configured {@code value.deserializer})
  */
 public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterceptor<K, V> {
-    /** Consumer config key used to configure the S3 access key. */
-    public static final String ACCESS_KEY_CONFIG = "interceptor.storage.access.key";
-    /** Consumer config key used to configure the S3 secret key. */
-    public static final String SECRET_KEY_CONFIG = "interceptor.storage.secret.key";
-    /** Consumer config key used to configure the S3 service endpoint. */
-    public static final String SERVICE_ENDPOINT_CONFIG = "interceptor.storage.service.endpoint";
-    /** Consumer config key used to configure the S3 signing region. */
-    public static final String REGION_CONFIG = "interceptor.storage.region";
-
-    private static final String DEFAULT_ACCESS_KEY = "admin";
-    private static final String DEFAULT_SECRET_KEY = "abc123abc123!";
-    private static final String DEFAULT_SERVICE_ENDPOINT = "http://dataplatform:9005";
-    private static final String DEFAULT_REGION = Regions.US_EAST_2.getName();
 
     private final ConsumerInterceptorMetrics metrics = new ConsumerInterceptorMetrics();
     private ObjectName metricsName;
-    private AmazonS3 s3client;
+    private StorageBackend storage;
     private Deserializer<Object> valueDeserializer;
 
     /**
      * Materializes any externalized payloads in the polled batch before the records reach the
-     * application. Records carrying the reference headers are rehydrated from storage (the stored
-     * bytes are turned back into a value by the configured {@code value.deserializer}); all others
-     * are passed through unchanged. Partition/offset/key/headers/timestamp metadata is preserved;
-     * only the value of an externalized record is replaced (the original {@code null} value becomes
-     * the materialized payload).
+     * application. Records carrying the reference header are rehydrated through the
+     * {@link StorageBackend} (the stored bytes are turned back into a value by the configured
+     * {@code value.deserializer}); all others are passed through unchanged. Partition/offset/key/
+     * headers/timestamp metadata is preserved; only the value of an externalized record is replaced
+     * (the original {@code null} value becomes the materialized payload).
      *
      * @param records the records returned by the poll
      * @return a new batch with references resolved to their original payloads
@@ -101,22 +82,19 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
         records.forEach(r -> {
             TopicPartition tp = new TopicPartition(r.topic(), r.partition());
 
-            // only records carrying the reference headers were externalized; others were left inline
+            // only records carrying the reference header were externalized; others were left inline
             // by the producer interceptor and are passed through unchanged
-            Header bucketHeader = r.headers().lastHeader(ProducerInterceptorToStorageHeaders.HEADER_BUCKET);
-            if (bucketHeader == null) {
+            Header referenceHeader = r.headers().lastHeader(ProducerInterceptorToStorageHeaders.HEADER_REFERENCE);
+            if (referenceHeader == null) {
                 metrics.recordPassThrough();
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(r);
                 return;
             }
 
-            String bucket = new String(bucketHeader.value(), StandardCharsets.UTF_8);
-            String objectName = headerValue(r, ProducerInterceptorToStorageHeaders.HEADER_OBJECT);
-
+            String uri = new String(referenceHeader.value(), StandardCharsets.UTF_8);
             try {
-                // retrieve Blob referenced by the headers
-                S3Object s3object = s3client.getObject(bucket, objectName);
-                byte[] byteArray = IOUtils.toByteArray(s3object.getObjectContent());
+                // fetch the externalized bytes through the storage backend
+                byte[] byteArray = storage.checkOut(new StorageReference(uri));
                 // reconstruct the opaque value via the consumer's configured value deserializer
                 V value = (V) valueDeserializer.deserialize(r.topic(), r.headers(), byteArray);
 
@@ -137,9 +115,6 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
 
                 metrics.recordMaterialized(byteArray.length);
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(newRecord);
-            } catch (IOException e) {
-                metrics.recordError();
-                throw new RuntimeException(e);
             } catch (RuntimeException e) {
                 metrics.recordError();
                 throw e;
@@ -149,58 +124,37 @@ public class ConsumerInterceptorToStorageHeaders<K, V> implements ConsumerInterc
         return new ConsumerRecords<>(newRecords);
     }
 
-    /** Reads the UTF-8 value of the last header with the given key, or throws if it is absent. */
-    private static String headerValue(ConsumerRecord<?, ?> record, String key) {
-        Header header = record.headers().lastHeader(key);
-        if (header == null) {
-            throw new IllegalStateException("Missing reference header '" + key + "'");
-        }
-        return new String(header.value(), StandardCharsets.UTF_8);
-    }
-
     @Override
     public void onCommit(Map<TopicPartition, OffsetAndMetadata> map) {
         // close connection to S3
     }
 
     /**
-     * Unregisters the metrics MBean and closes the value deserializer this interceptor instantiated.
+     * Unregisters the metrics MBean and closes the storage backend and the value deserializer.
      */
     @Override
     public void close() {
         JmxMetrics.unregister(metricsName);
+        if (storage != null) {
+            storage.close();
+        }
         if (valueDeserializer != null) {
             valueDeserializer.close();
         }
     }
 
     /**
-     * Reads the object-store settings from the consumer configuration, builds the S3 client used to
-     * fetch externalized payloads, and instantiates a private copy of the configured
-     * {@code value.deserializer} used to reconstruct values from the stored bytes. Missing
-     * {@code interceptor.storage.*} keys fall back to their defaults. See
-     * {@link ConsumerInterceptorToStorage} for the recognized keys.
+     * Creates / configures the {@link StorageBackend} (which reads the {@code interceptor.storage.*}
+     * keys from the consumer configuration), instantiates a private copy of the configured
+     * {@code value.deserializer}, and registers the metrics MBean.
      *
      * @param map the consumer configuration passed by the Kafka client
      */
     @Override
     public void configure(Map<String, ?> map) {
-        String accessKey = getOrDefault(map, ACCESS_KEY_CONFIG, DEFAULT_ACCESS_KEY);
-        String secretKey = getOrDefault(map, SECRET_KEY_CONFIG, DEFAULT_SECRET_KEY);
-        String serviceEndpoint = getOrDefault(map, SERVICE_ENDPOINT_CONFIG, DEFAULT_SERVICE_ENDPOINT);
-        String region = getOrDefault(map, REGION_CONFIG, DEFAULT_REGION);
-
         valueDeserializer = instantiateValueDeserializer(map);
-
-        AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
-
-        s3client = AmazonS3ClientBuilder
-                .standard()
-                .withCredentials(new AWSStaticCredentialsProvider(credentials))
-                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
-                .withPathStyleAccessEnabled(true)
-                .build();
-
+        storage = new S3StorageBackend();
+        storage.configure(map);
         metricsName = JmxMetrics.register(metrics, "ConsumerInterceptor", getOrDefault(map, "client.id", ""));
     }
 

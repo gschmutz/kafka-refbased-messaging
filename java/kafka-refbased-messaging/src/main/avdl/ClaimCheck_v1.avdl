@@ -1,5 +1,5 @@
 @namespace("com.trivadis.demo.dto")
-protocol ObjectReferenceProtocol {
+protocol ClaimCheckProtocol {
 
   /**
    * Reference (Claim Check) message for Reference-Based Messaging.
@@ -9,7 +9,7 @@ protocol ObjectReferenceProtocol {
    * reference is published on the topic. Consumers use the reference to fetch
    * and deserialize the original payload from storage.
    */
-  record ObjectReference {
+  record ClaimCheck {
     /** Time the reference was created (event timestamp), in epoch milliseconds. */
     timestamp_ms ts;
 
@@ -20,10 +20,10 @@ protocol ObjectReferenceProtocol {
      */
     string payloadType;
 
-    /** Name of the storage bucket holding the externalized payload. */
-    string bucketName;
-
-    /** Key / object name of the externalized payload within the bucket. */
-    string objectName;
+    /**
+     * URI referencing the externalized payload in object storage, encoding both the
+     * storage bucket and the object key (e.g. "s3://my-bucket/path/to/object").
+     */
+    string payloadReference;
   }
 }
