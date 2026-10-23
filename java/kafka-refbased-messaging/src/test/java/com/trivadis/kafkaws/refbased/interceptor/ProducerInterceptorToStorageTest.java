@@ -146,6 +146,30 @@ class ProducerInterceptorToStorageTest {
     }
 
     @Test
+    void metricsCountInlineAndExternalized() {
+        FakeAmazonS3 s3 = new FakeAmazonS3();
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put(ProducerInterceptorToStorage.SIZE_THRESHOLD_CONFIG, "1024");
+        cfg.put(ProducerInterceptorToStorage.BUCKET_NAME_CONFIG, "bucket");
+        ProducerInterceptorToStorage<Long, ObjectReference> i = configured(cfg, s3);
+
+        // tiny payload -> inline
+        i.onSend(new ProducerRecord<>("t", 1L, samplePayload()));
+        // padded payload -> externalized (objectName inflated well beyond 1 KiB)
+        ObjectReference big = ObjectReference.newBuilder()
+                .setTs(Instant.now()).setPayloadType("Person")
+                .setBucketName("b").setObjectName(new String(new char[4096]).replace('\0', 'x'))
+                .build();
+        i.onSend(new ProducerRecord<>("t", 2L, big));
+
+        ProducerInterceptorMetricsMBean m = (ProducerInterceptorMetricsMBean) TestSupport.getField(i, "metrics");
+        assertEquals(1, m.getRecordsInline());
+        assertEquals(1, m.getRecordsExternalized());
+        assertTrue(m.getBytesExternalized() > 1024);
+        assertEquals(0, m.getExternalizationErrors());
+    }
+
+    @Test
     void userMetadataIsAttached() {
         FakeAmazonS3 s3 = new FakeAmazonS3();
 

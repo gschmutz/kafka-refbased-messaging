@@ -96,5 +96,10 @@ class ConsumerInterceptorToStorageTest {
         assertEquals(Long.valueOf(9L), materialized.key());
         assertEquals("bucket", s3.getBucket);
         assertEquals("key123", s3.getKey);
+
+        ConsumerInterceptorMetricsMBean m = (ConsumerInterceptorMetricsMBean) TestSupport.getField(interceptor, "metrics");
+        assertEquals(1, m.getRecordsMaterialized());
+        assertEquals(0, m.getRecordsPassedThrough());
+        assertEquals(bytes.length, m.getBytesFetched());
     }
 }

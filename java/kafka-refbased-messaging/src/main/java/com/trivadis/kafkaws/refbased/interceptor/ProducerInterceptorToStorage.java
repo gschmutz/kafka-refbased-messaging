@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+import javax.management.ObjectName;
+
 import org.apache.avro.io.BinaryEncoder;
 import org.apache.avro.io.DatumWriter;
 import org.apache.avro.io.EncoderFactory;
@@ -52,6 +54,11 @@ import com.trivadis.demo.dto.ObjectReference;
  * {@code payload-size-bytes}, plus {@code kafka-partition} / {@code kafka-timestamp} when the
  * application set them. The <em>offset</em> is deliberately absent: in a producer interceptor the
  * record has not been appended yet, so no offset exists.
+ * <p>
+ * <strong>Monitoring.</strong> Behaviour counters (records externalized / inline, bytes externalized,
+ * errors) are exposed as a JMX MBean under
+ * {@code com.trivadis.kafkaws.refbased:type=ProducerInterceptor,client-id=<client.id>}; see
+ * {@link ProducerInterceptorMetricsMBean}.
  * <p>
  * <strong>Configuration.</strong> All settings are read from the producer configuration (the same
  * map Kafka passes to {@link #configure(Map)}); each has a default so the interceptor works out of
@@ -167,6 +174,8 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
     private String partitionGranularity = PARTITION_NONE;
     private Pattern topicTransformPattern;
     private String topicTransformReplacement = "";
+    private final ProducerInterceptorMetrics metrics = new ProducerInterceptorMetrics();
+    private ObjectName metricsName;
 
     /**
      * Serializes an Avro {@link org.apache.avro.specific.SpecificRecordBase} to its Avro binary
@@ -213,6 +222,7 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
         // claim-check only kicks in for large payloads; smaller records stay inline on the
         // topic unchanged (the consumer interceptor passes non-reference records through)
         if (bytes.length <= sizeThreshold) {
+            metrics.recordInline();
             return record;
         }
 
@@ -243,17 +253,23 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
         String bucket = applyTopicPlaceholder(bucketName, resolvedTopic);
         String objectName = buildObjectName(resolvedTopic);
 
-        // make sure the target bucket exists before storing the object
-        if (!s3client.doesBucketExistV2(bucket)) {
-            s3client.createBucket(bucket);
-        }
+        try {
+            // make sure the target bucket exists before storing the object
+            if (!s3client.doesBucketExistV2(bucket)) {
+                s3client.createBucket(bucket);
+            }
 
-        s3client.putObject(
-                bucket,
-                objectName,
-                stream,
-                meta
-        );
+            s3client.putObject(
+                    bucket,
+                    objectName,
+                    stream,
+                    meta
+            );
+        } catch (RuntimeException e) {
+            metrics.recordError();
+            throw e;
+        }
+        metrics.recordExternalized(bytes.length);
 
         ObjectReference objectReference = ObjectReference.newBuilder()
                 .setTs(Instant.now())
@@ -284,6 +300,7 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
      */
     @Override
     public void close() {
+        JmxMetrics.unregister(metricsName);
     }
 
     /**
@@ -302,6 +319,7 @@ public class ProducerInterceptorToStorage<K,V extends org.apache.avro.specific.S
         String topicRegex = getOrDefault(configs, TOPIC_TRANSFORM_REGEX_CONFIG, "");
         topicTransformPattern = topicRegex.isEmpty() ? null : Pattern.compile(topicRegex);
         topicTransformReplacement = getOrDefault(configs, TOPIC_TRANSFORM_REPLACEMENT_CONFIG, "");
+        metricsName = JmxMetrics.register(metrics, "ProducerInterceptor", getOrDefault(configs, "client.id", ""));
         String accessKey = getOrDefault(configs, ACCESS_KEY_CONFIG, DEFAULT_ACCESS_KEY);
         String secretKey = getOrDefault(configs, SECRET_KEY_CONFIG, DEFAULT_SECRET_KEY);
         String serviceEndpoint = getOrDefault(configs, SERVICE_ENDPOINT_CONFIG, DEFAULT_SERVICE_ENDPOINT);

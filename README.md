@@ -142,6 +142,21 @@ Each externalized object carries the Kafka context available at produce time as 
 > log, so no offset exists yet. For the same reason `partition` and `timestamp` are only present if
 > the application set them explicitly — otherwise the broker assigns them after the send.
 
+### Monitoring
+
+Both interceptors expose their behaviour as **JMX MBeans** (no extra dependencies), registered per
+Kafka `client.id`:
+
+| MBean | Attributes |
+|-------|------------|
+| `com.trivadis.kafkaws.refbased:type=ProducerInterceptor,client-id=<id>` | `RecordsExternalized`, `RecordsInline`, `BytesExternalized`, `ExternalizationErrors` |
+| `com.trivadis.kafkaws.refbased:type=ConsumerInterceptor,client-id=<id>` | `RecordsMaterialized`, `RecordsPassedThrough`, `BytesFetched`, `FetchErrors` |
+
+You can inspect them with JConsole / VisualVM, or scrape them into Prometheus + Grafana via the
+platform's JMX exporter — enable `jmx_monitoring_with_prometheus_enable` (and `PROMETHEUS_enable`
+/ `GRAFANA_enable`) in [docker/config.yml](docker/config.yml). Registration is best-effort: a JMX
+failure never interrupts message flow.
+
 ### Using it in your own application
 
 1. Add the dependency:

@@ -28,6 +28,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.management.ObjectName;
+
 /**
  * Kafka {@link ConsumerInterceptor} that reverses the Reference-Based Messaging (Claim Check)
  * applied by {@code ProducerInterceptorToStorage}.
@@ -60,6 +62,11 @@ import java.util.Map;
  * These mirror the producer-side {@code interceptor.storage.*} keys. Note there is no size
  * threshold here &mdash; whether to externalize is a producer-only decision; the consumer reacts to
  * the record value type.
+ * <p>
+ * <strong>Monitoring.</strong> Behaviour counters (records materialized / passed through, bytes
+ * fetched, errors) are exposed as a JMX MBean under
+ * {@code com.trivadis.kafkaws.refbased:type=ConsumerInterceptor,client-id=<client.id>}; see
+ * {@link ConsumerInterceptorMetricsMBean}.
  *
  * @param <K> record key type
  * @param <V> record value type (the materialized payload, or {@link ObjectReference} on the wire)
@@ -80,6 +87,8 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
     private static final String DEFAULT_REGION = Regions.US_EAST_2.getName();
 
     private AmazonS3 s3client;
+    private final ConsumerInterceptorMetrics metrics = new ConsumerInterceptorMetrics();
+    private ObjectName metricsName;
 
     // DTOs are generated into the same package as ObjectReference (e.g. com.trivadis.demo.dto)
     private static final String DTO_PACKAGE = ObjectReference.class.getPackage().getName();
@@ -139,18 +148,20 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
             // only records carrying an ObjectReference were externalized; smaller payloads were
             // left inline by the producer interceptor and are passed through unchanged
             if (!(r.value() instanceof ObjectReference)) {
+                metrics.recordPassThrough();
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(r);
                 return;
             }
 
             // retrieve Blob referenced by the ObjectReference
             ObjectReference be = (ObjectReference) r.value();
-            S3Object s3object = s3client.getObject(be.getBucketName(), be.getObjectName());
             try {
+                S3Object s3object = s3client.getObject(be.getBucketName(), be.getObjectName());
                 byte[] byteArray = IOUtils.toByteArray(s3object.getObjectContent());
                 // resolve the payload type from the payloadType field of the ObjectReference
                 Class<? extends SpecificRecordBase> payloadClass = resolvePayloadClass(be.getPayloadType().toString());
                 SpecificRecordBase srb = deserialize(byteArray, payloadClass);
+                metrics.recordMaterialized(byteArray.length);
 
                 // build a new record with the resolved value in place of the reference
                 ConsumerRecord<K, V> newRecord = new ConsumerRecord<>(
@@ -168,7 +179,11 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
 
                 newRecords.computeIfAbsent(tp, k -> new ArrayList<>()).add(newRecord);
             } catch (IOException e) {
+                metrics.recordError();
                 throw new RuntimeException(e);
+            } catch (RuntimeException e) {
+                metrics.recordError();
+                throw e;
             }
         });
 
@@ -182,7 +197,7 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
 
     @Override
     public void close() {
-
+        JmxMetrics.unregister(metricsName);
     }
 
     /**
@@ -207,6 +222,8 @@ public class ConsumerInterceptorToStorage<K, V> implements ConsumerInterceptor<K
                 .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(serviceEndpoint, region))
                 .withPathStyleAccessEnabled(true)
                 .build();
+
+        metricsName = JmxMetrics.register(metrics, "ConsumerInterceptor", getOrDefault(map, "client.id", ""));
     }
 
     private static String getOrDefault(Map<String, ?> configs, String key, String defaultValue) {
