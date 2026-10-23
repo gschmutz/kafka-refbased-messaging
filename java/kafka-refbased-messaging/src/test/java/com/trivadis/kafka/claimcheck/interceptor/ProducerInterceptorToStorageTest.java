@@ -1,7 +1,7 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafka.claimcheck.interceptor;
 
 import com.trivadis.demo.dto.ObjectReference;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetricsMBean;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.ProducerInterceptorMetricsMBean;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
 

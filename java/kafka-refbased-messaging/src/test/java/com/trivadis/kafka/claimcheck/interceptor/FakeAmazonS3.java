@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafka.claimcheck.interceptor;
 
 import com.amazonaws.services.s3.AbstractAmazonS3;
 import com.amazonaws.services.s3.model.Bucket;

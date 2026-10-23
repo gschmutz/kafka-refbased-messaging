@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor.metrics;
+package com.trivadis.kafka.claimcheck.interceptor.metrics;
 
 import java.lang.management.ManagementFactory;
 
@@ -12,7 +12,7 @@ import javax.management.ObjectName;
  */
 public final class JmxMetrics {
 
-    static final String DOMAIN = "com.trivadis.kafkaws.refbased";
+    static final String DOMAIN = "com.trivadis.kafka.claimcheck";
 
     private JmxMetrics() {
     }

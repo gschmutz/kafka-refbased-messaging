@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafka.claimcheck.interceptor;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -27,9 +27,9 @@ import com.amazonaws.regions.Regions;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.JmxMetrics;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetrics;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetricsMBean;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.JmxMetrics;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.ProducerInterceptorMetrics;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.ProducerInterceptorMetricsMBean;
 
 /**
  * Header-based, <strong>serializer-agnostic</strong> variant of {@link ProducerInterceptorToStorage}
@@ -65,7 +65,7 @@ import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetr
  * <p>
  * <strong>Monitoring.</strong> Behaviour counters (records externalized / inline, bytes externalized,
  * errors) are exposed as a JMX MBean under
- * {@code com.trivadis.kafkaws.refbased:type=ProducerInterceptor,client-id=<client.id>}; see
+ * {@code com.trivadis.kafka.claimcheck:type=ProducerInterceptor,client-id=<client.id>}; see
  * {@link ProducerInterceptorMetricsMBean}.
  *
  * @param <K> record key type

@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafka.claimcheck.interceptor;
 
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.AWSStaticCredentialsProvider;
@@ -11,9 +11,9 @@ import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectInputStream;
 import com.amazonaws.util.IOUtils;
 import com.trivadis.demo.dto.ObjectReference;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.ConsumerInterceptorMetrics;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.ConsumerInterceptorMetricsMBean;
-import com.trivadis.kafkaws.refbased.interceptor.metrics.JmxMetrics;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetrics;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.ConsumerInterceptorMetricsMBean;
+import com.trivadis.kafka.claimcheck.interceptor.metrics.JmxMetrics;
 import org.apache.avro.io.BinaryDecoder;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.DecoderFactory;
@@ -68,7 +68,7 @@ import javax.management.ObjectName;
  * <p>
  * <strong>Monitoring.</strong> Behaviour counters (records materialized / passed through, bytes
  * fetched, errors) are exposed as a JMX MBean under
- * {@code com.trivadis.kafkaws.refbased:type=ConsumerInterceptor,client-id=<client.id>}; see
+ * {@code com.trivadis.kafka.claimcheck:type=ConsumerInterceptor,client-id=<client.id>}; see
  * {@link ConsumerInterceptorMetricsMBean}.
  *
  * @param <K> record key type

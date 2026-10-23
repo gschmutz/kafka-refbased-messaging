@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor.metrics;
+package com.trivadis.kafka.claimcheck.interceptor.metrics;
 
 import java.util.concurrent.atomic.AtomicLong;
 

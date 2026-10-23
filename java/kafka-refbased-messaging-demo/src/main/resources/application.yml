@@ -15,7 +15,7 @@ spring:
         auto.register.schemas: false
         use.latest.version: true
         value.subject.name.strategy: io.confluent.kafka.serializers.subject.TopicRecordNameStrategy
-        interceptor.classes: com.trivadis.kafkaws.refbased.interceptor.ProducerInterceptorToStorage
+        interceptor.classes: com.trivadis.kafka.claimcheck.interceptor.ProducerInterceptorToStorage
         interceptor.storage.bucket.name: refbased-messaging-bucket
         # optional key prefix ("folder") the externalized objects are stored under
         interceptor.storage.object.prefix: ${topic}
@@ -35,7 +35,7 @@ spring:
       value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
       properties:
         specific.avro.reader: true
-        interceptor.classes: com.trivadis.kafkaws.refbased.interceptor.ConsumerInterceptorToStorage
+        interceptor.classes: com.trivadis.kafka.claimcheck.interceptor.ConsumerInterceptorToStorage
         interceptor.storage.access.key: admin
         interceptor.storage.secret.key: abc123abc123!
         interceptor.storage.service.endpoint: http://${DATAPLATFORM_IP}:9005

@@ -1,8 +1,8 @@
-package com.trivadis.kafkaws.refbased.interceptor.metrics;
+package com.trivadis.kafka.claimcheck.interceptor.metrics;
 
 /**
  * JMX view of the {@link ProducerInterceptorToStorage} behaviour. Registered under
- * {@code com.trivadis.kafkaws.refbased:type=ProducerInterceptor,client-id=<client.id>}.
+ * {@code com.trivadis.kafka.claimcheck:type=ProducerInterceptor,client-id=<client.id>}.
  */
 public interface ProducerInterceptorMetricsMBean {
 

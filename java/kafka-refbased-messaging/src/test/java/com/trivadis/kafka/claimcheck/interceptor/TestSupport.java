@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafka.claimcheck.interceptor;
 
 import java.lang.reflect.Field;
 

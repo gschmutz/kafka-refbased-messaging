@@ -16,7 +16,7 @@ spring:
         # no type headers: the reference-based consumer reconstructs via a configured default type
         spring.json.add.type.headers: false
         # serializer-agnostic header variant: reference travels in headers, value is sent as null
-        interceptor.classes: com.trivadis.kafkaws.refbased.interceptor.ProducerInterceptorToStorageHeaders
+        interceptor.classes: com.trivadis.kafka.claimcheck.interceptor.ProducerInterceptorToStorageHeaders
         interceptor.storage.bucket.name: refbased-json-bucket
         # optional key prefix ("folder") the externalized objects are stored under
         interceptor.storage.object.prefix: ${topic}
@@ -39,7 +39,7 @@ spring:
         spring.json.use.type.headers: false
         spring.json.value.default.type: com.trivadis.kafkaws.springbootkafkainterceptor.Person
         spring.json.trusted.packages: "*"
-        interceptor.classes: com.trivadis.kafkaws.refbased.interceptor.ConsumerInterceptorToStorageHeaders
+        interceptor.classes: com.trivadis.kafka.claimcheck.interceptor.ConsumerInterceptorToStorageHeaders
         interceptor.storage.access.key: admin
         interceptor.storage.secret.key: abc123abc123!
         interceptor.storage.service.endpoint: http://${DATAPLATFORM_IP}:9005
