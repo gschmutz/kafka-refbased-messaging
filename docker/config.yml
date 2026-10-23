@@ -3365,7 +3365,7 @@
       RUSTFS_volume_map_logs: false
       RUSTFS_access_key: admin
       RUSTFS_secret_key: abc123abc123!
-      RUSTFS_admin_bucket_name: admin-bucket, person-ref-bucket
+      RUSTFS_admin_bucket_name: admin-bucket, refbased-messaging-bucket
       # add additional buckets, comma separated, admin-bucket will be created by default
       RUSTFS_buckets: ''
       RUSTFS_console_enabled: true
