@@ -19,51 +19,113 @@ Azure Data Lake Storage, ...).
    Kafka topic  ─────────────────────►  Consumer
 ```
 
-## Solutions in this repository
+## Two strategies for carrying the reference
 
-There are two independent ways to apply the pattern here:
+Once the payload is in the object store, the small reference that still travels through Kafka can be
+carried in **one of two ways**. This repository implements **both**, as two matched interceptor pairs
+that share the same object-store logic (size threshold, bucket/prefix/partitioning, stored-object
+metadata) and the same `interceptor.storage.*` configuration — they differ only in **how the
+reference is represented on the topic**:
 
-| Solution | Modules | How it works |
-|----------|---------|--------------|
-| **Interceptor-based (transparent)** | [`kafka-refbased-messaging`](java/kafka-refbased-messaging) library + [`kafka-refbased-messaging-demo`](java/kafka-refbased-messaging-demo) | Kafka producer/consumer **interceptors** do the externalization automatically. Application code produces and consumes the normal payload and is unaware that large messages are offloaded to object storage. |
-| **Manual producer + Apache NiFi** | [`demo-refbased-producer`](java/demo-refbased-producer) | The application **explicitly** writes the payload to the object store and produces a reference message itself. A NiFi flow consumes the reference and retrieves the object. |
+| | **1 · Value reference (placeholder message)** | **2 · Header reference** |
+|--|----------------------------------------------|--------------------------|
+| Reference travels as | the Kafka **record value** — an Avro `ClaimCheck` placeholder | Kafka **record headers** |
+| Record value on the topic | the `ClaimCheck` (non-null) | `null` |
+| Payload formats | Avro | **any** (Avro, JSON, String, `byte[]`, …) — serializer-agnostic |
+| Subject naming strategy | **`TopicRecordNameStrategy`** (so the reference and payload schemas can coexist on the topic) | not applicable |
+| Extra schema on the topic | yes — the `ClaimCheck` schema alongside the payload schema | none |
+| Safe on compacted topics | yes | **no** — a `null` value is a tombstone |
+| Interceptors | `ProducerInterceptorToStorage` / `ConsumerInterceptorToStorage` | `ProducerInterceptorToStorageHeaders` / `ConsumerInterceptorToStorageHeaders` |
 
-The remainder of this README focuses on the interceptor-based solution. The manual/NiFi approach is
-described at the end.
+```
+ 1 · value reference                         2 · header reference
+   key | value=ClaimCheck{bucket,obj}     key | value=null
+       |                                            | headers: refbased.reference=s3://bucket/key, …
+```
+
+In short: the **value-reference** strategy keeps a real, non-null, schema'd message on the topic (so
+it is visible to any consumer and safe on compacted topics), at the cost of a second schema coexisting
+on the topic and being tied to Avro. The **header-reference** strategy keeps the reference out of the
+value entirely, which makes it work with any serializer and needs no extra schema — but the `null`
+value rules out compacted topics.
+
+Both strategies are provided by the interceptor library and are detailed below. The externalization
+is done entirely by Kafka producer/consumer **interceptors**: application code produces and consumes
+the normal payload and is unaware that large messages are offloaded to object storage.
 
 ---
 
 ## The library: `kafka-refbased-messaging`
 
-A small, framework-agnostic library (plain Kafka client, no Spring) that provides the two
-interceptors and the reference message schema.
+A small, framework-agnostic library (plain Kafka client, no Spring) that provides **both** reference
+strategies as two matched interceptor pairs, plus the Avro reference schema. Pick the pair that fits
+your topic; both are configured through the same `interceptor.storage.*` keys (see
+[Configuration](#configuration)).
+
+### Strategy 1 · value reference (Avro placeholder)
+
+The reference travels as the Kafka **record value**, an Avro `ClaimCheck` placeholder.
 
 - **`ProducerInterceptorToStorage`** – for records whose serialized value exceeds a configurable
   size threshold, stores the Avro payload in the object store and replaces the record value with a
-  lightweight `ObjectReference`. Smaller records are left **inline** on the topic unchanged. The
+  lightweight `ClaimCheck`. Smaller records are left **inline** on the topic unchanged. The
   reference is published on the **same topic** as the original record.
-- **`ConsumerInterceptorToStorage`** – inspects every record: if the value is an `ObjectReference`
+- **`ConsumerInterceptorToStorage`** – inspects every record: if the value is an `ClaimCheck`
   it fetches and deserializes the original payload from storage; otherwise the record is passed
   through unchanged. The application therefore always receives the materialized payload.
-- **`ObjectReference`** – the Avro reference record (generated from `src/main/avdl`):
+- **`ClaimCheck`** – the Avro reference record (generated from `src/main/avdl`):
 
   | Field | Meaning |
   |-------|---------|
   | `ts` | time the reference was created (epoch millis) |
   | `payloadType` | record name of the externalized payload (e.g. `Person`) |
-  | `bucketName` | bucket holding the externalized payload |
-  | `objectName` | object key within the bucket |
+  | `payloadReference` | URI of the externalized payload, encoding bucket + object key (e.g. `s3://bucket/key`) |
 
-### Same topic, two schemas
-
-Because the reference is published on the original topic, the `ObjectReference` schema and the
-original payload schema coexist on one topic. This requires a **record-aware subject naming
-strategy** on the value serializer, so each record type is registered under its own Schema Registry
-subject:
+**Same topic, two schemas.** Because the reference is published on the original topic, the
+`ClaimCheck` schema and the original payload schema coexist on one topic. This requires a
+**record-aware subject naming strategy** on the value serializer, so each record type is registered
+under its own Schema Registry subject:
 
 ```
 value.subject.name.strategy: io.confluent.kafka.serializers.subject.TopicRecordNameStrategy
 ```
+
+Use this strategy when consumers (or tooling) should still see a real, inspectable message for every
+record, or when the topic is **log-compacted**.
+
+### Strategy 2 · header reference (serializer-agnostic)
+
+The reference travels in Kafka **record headers** and the record value is sent as `null`. The payload
+is treated as **opaque**, so this pair works for **any** value type (Avro, JSON, String, `byte[]`, …).
+
+- **`ProducerInterceptorToStorageHeaders`** – for records over the size threshold, it serializes the
+  value with the producer's **configured `value.serializer`**, stores those bytes in the object
+  store, then publishes the record with a **`null` value** and the reference in headers. Smaller
+  records are left inline unchanged.
+- **`ConsumerInterceptorToStorageHeaders`** – if a record carries the reference headers, it fetches
+  the stored bytes and reconstructs the value with the consumer's **configured `value.deserializer`**;
+  otherwise the record passes through unchanged.
+
+Because the bytes are produced and consumed by the serializers the application is already configured
+with, the interceptors contain no format-specific code. The reference is carried in these headers:
+
+| Header | Meaning |
+|--------|---------|
+| `refbased.reference` | storage reference URI, e.g. `s3://bucket/key` (its presence marks a record as externalized) |
+| `refbased.payloadType` | payload's Java class at produce time (informational only) |
+| `refbased.ts` | time the reference was created (epoch millis) |
+
+This strategy needs **no `ClaimCheck` schema, no Schema Registry subject strategy, and no second
+schema on the topic** — the value on the wire is simply `null`. On the consumer, reconstruction goes
+through `value.deserializer`, so for formats without type headers (e.g. JSON) pin a default type
+(`spring.json.value.default.type`).
+
+> **Caveat:** a `null` value is the log-compaction **tombstone** marker, so this strategy must not be
+> used on a **compacted** topic (every externalized record would mark its key for deletion). On
+> normal delete/time-retention topics it is safe.
+
+The [`kafka-refbased-messaging-json-demo`](java/kafka-refbased-messaging-json-demo) module uses this
+pair with JSON payloads.
 
 ### Configuration
 
@@ -122,7 +184,7 @@ derived from the configured granularity:
 Partitioning by time lets you handle **data retention asynchronously**: configure an object-store
 lifecycle / expiration rule on the date prefix (e.g. delete everything under `person/2026/09/…`
 after 90 days) instead of deleting individual objects. The full key is always recorded in the
-`ObjectReference`, so the consumer retrieves objects regardless of the layout.
+`ClaimCheck`, so the consumer retrieves objects regardless of the layout.
 
 #### Stored object metadata
 
@@ -144,13 +206,14 @@ Each externalized object carries the Kafka context available at produce time as 
 
 ### Monitoring
 
-Both interceptors expose their behaviour as **JMX MBeans** (no extra dependencies), registered per
-Kafka `client.id`:
+The interceptors of **both strategies** expose their behaviour as **JMX MBeans** (no extra
+dependencies), registered per Kafka `client.id` under the same MBean names (a given producer/consumer
+uses one strategy):
 
 | MBean | Attributes |
 |-------|------------|
-| `com.trivadis.kafkaws.refbased:type=ProducerInterceptor,client-id=<id>` | `RecordsExternalized`, `RecordsInline`, `BytesExternalized`, `ExternalizationErrors` |
-| `com.trivadis.kafkaws.refbased:type=ConsumerInterceptor,client-id=<id>` | `RecordsMaterialized`, `RecordsPassedThrough`, `BytesFetched`, `FetchErrors` |
+| `com.trivadis.kafka.claimcheck:type=ProducerInterceptor,client-id=<id>` | `RecordsExternalized`, `RecordsInline`, `BytesExternalized`, `ExternalizationErrors` |
+| `com.trivadis.kafka.claimcheck:type=ConsumerInterceptor,client-id=<id>` | `RecordsMaterialized`, `RecordsPassedThrough`, `BytesFetched`, `FetchErrors` |
 
 You can inspect them with JConsole / VisualVM, or scrape them into Prometheus + Grafana via the
 platform's JMX exporter — enable `jmx_monitoring_with_prometheus_enable` (and `PROMETHEUS_enable`
@@ -169,14 +232,21 @@ failure never interrupts message flow.
    </dependency>
    ```
 
-2. Register the interceptors and set the subject naming strategy on the producer, and register the
-   consumer interceptor (see the demo [`application.yml`](java/kafka-refbased-messaging-demo/src/main/resources/application.yml)
-   for a complete example).
+2. Register the matching producer/consumer interceptors for your chosen strategy via
+   `interceptor.classes`:
+   - **Strategy 1 (value reference):** `ProducerInterceptorToStorage` / `ConsumerInterceptorToStorage`,
+     and set `value.subject.name.strategy: …TopicRecordNameStrategy` on the producer. See the demo
+     [`application.yml`](java/kafka-refbased-messaging-demo/src/main/resources/application.yml).
+   - **Strategy 2 (header reference):** `ProducerInterceptorToStorageHeaders` /
+     `ConsumerInterceptorToStorageHeaders`, with whatever `value.serializer` / `value.deserializer`
+     your payload uses. See the JSON demo
+     [`application.yml`](java/kafka-refbased-messaging-json-demo/src/main/resources/application.yml).
 
-> **Note:** the payload is stored as raw Avro binary and the consumer resolves the payload class
-> from `payloadType`, so the payload classes must be on the consumer's classpath. In the current
-> code the producer sets `payloadType` to `"Person"`, so as written it round-trips `Person`
-> payloads.
+> **Note (strategy 1):** the payload is stored as raw Avro binary and the consumer resolves the
+> payload class from `payloadType`, so the payload classes must be on the consumer's classpath. In
+> the current code the producer sets `payloadType` to `"Person"`, so as written it round-trips
+> `Person` payloads. Strategy 2 instead reconstructs the value via the configured
+> `value.deserializer`, so it carries no such Avro assumption.
 
 ### Build & install the library
 
@@ -214,12 +284,12 @@ export DATAPLATFORM_IP=<your-dataplatform-ip>
 ### Run it
 
 The demo uses `auto.register.schemas: false`, so the Avro schemas must be registered first (this
-also requires the library to be built, since the `ObjectReference` schema lives there).
+also requires the library to be built, since the `ClaimCheck` schema lives there).
 
 ```bash
 export DATAPLATFORM_IP=<your-dataplatform-ip>
 
-# 1. build & install the library (generates the ObjectReference schema)
+# 1. build & install the library (generates the ClaimCheck schema)
 cd ./java/kafka-refbased-messaging
 mvn clean install -Dmaven.test.skip=true
 
@@ -239,51 +309,50 @@ mvn spring-boot:run -Dspring-boot.run.arguments="50 100 0"
 ```
 
 Watch the log: `LARGE` records are stored in the `person-ref-bucket` of the object store and sent as
-an `ObjectReference`, while `small` records travel inline — and the consumer materializes both back
+an `ClaimCheck`, while `small` records travel inline — and the consumer materializes both back
 into `Person`.
 
 ---
 
-## Alternative: manual producer + Apache NiFi (`demo-refbased-producer`)
+## The JSON demo: `kafka-refbased-messaging-json-demo`
 
-This approach does not use interceptors: the application writes the payload to the object store and
-produces the reference message itself, and a NiFi flow retrieves the object on the consuming side.
+A second runnable Spring Boot demo that exercises the **header-based, serializer-agnostic**
+interceptors with **JSON** payloads instead of Avro. It is a copy of the demo above with three
+differences:
 
-### Prepare the Avro schemas
+- the payload is a plain POJO (`Person`) serialized with Spring Kafka's `JsonSerializer` /
+  `JsonDeserializer` — **no Avro, no Schema Registry**;
+- it wires `ProducerInterceptorToStorageHeaders` / `ConsumerInterceptorToStorageHeaders`, so the
+  reference travels in headers and large records are sent with a `null` value;
+- the consumer pins the target type via `spring.json.value.default.type`, since the stored JSON
+  carries no type headers.
 
-Build the `kafka-refbased-messaging` library first (it owns the `ObjectReference` schema), then
-build the producer and register the subjects:
+It produces and consumes on the `person-json` topic; as before, roughly every third (padded) record
+exceeds the threshold and is externalized to the `refbased-json-bucket`, while the rest stay inline.
+
+### Prerequisites
+
+A running data platform providing **Kafka** and an **S3-compatible object store** (MinIO). Unlike the
+Avro demo, **no Schema Registry is needed**. The demo expects Kafka on `9092/9093` and MinIO on
+`9005`.
+
+### Run it
 
 ```bash
 export DATAPLATFORM_IP=<your-dataplatform-ip>
 
+# 1. build & install the library (provides the interceptors)
 cd ./java/kafka-refbased-messaging
 mvn clean install -Dmaven.test.skip=true
 
-cd ../demo-refbased-producer
-mvn clean package -Dmaven.test.skip=true
-mvn schema-registry:register
-```
-
-### NiFi data flow
-
-A data flow in NiFi receives a message from Kafka, retrieves the referenced object from S3, and then
-buffers the object for writing back to S3.
-
-Import the NiFi template `/nifi/Generic_Pipeline_Process_Archive.xml` into NiFi and use it to create
-a new flow. Enable all services, then start all processors.
-
-### Run the simulator
-
-The simulator creates Kafka messages with a reference to the "large" object stored in an S3 bucket.
-
-```bash
-export DATAPLATFORM_IP=<your-dataplatform-ip>
-
-cd ./java/demo-refbased-producer
-mvn package -Dmaven.test.skip=true
+# 2. run the JSON demo (no schema registration step required)
+cd ../kafka-refbased-messaging-json-demo
 mvn spring-boot:run
 ```
+
+As with the Avro demo you can override `<messageCount> <waitMsBetween> <key>` via
+`-Dspring-boot.run.arguments="50 100 0"`.
+
 
 ---
 
@@ -291,6 +360,6 @@ mvn spring-boot:run
 
 | Module | Description |
 |--------|-------------|
-| [`java/kafka-refbased-messaging`](java/kafka-refbased-messaging) | Reusable interceptor library + `ObjectReference` schema |
-| [`java/kafka-refbased-messaging-demo`](java/kafka-refbased-messaging-demo) | Spring Boot demo of the interceptor-based solution |
-| [`java/demo-refbased-producer`](java/demo-refbased-producer) | Manual reference producer used with the NiFi flow |
+| [`java/kafka-refbased-messaging`](java/kafka-refbased-messaging) | Reusable interceptor library (Avro value-reference + serializer-agnostic header variants) + `ClaimCheck` schema |
+| [`java/kafka-refbased-messaging-demo`](java/kafka-refbased-messaging-demo) | Spring Boot demo of the interceptor-based solution (Avro value-reference) |
+| [`java/kafka-refbased-messaging-json-demo`](java/kafka-refbased-messaging-json-demo) | Spring Boot demo of the header-based interceptors with JSON payloads |
