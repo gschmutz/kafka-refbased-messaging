@@ -1,25 +1,25 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafkaws.refbased.interceptor.metrics;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Thread-safe counters backing {@link ProducerInterceptorMetricsMBean}. */
-class ProducerInterceptorMetrics implements ProducerInterceptorMetricsMBean {
+public class ProducerInterceptorMetrics implements ProducerInterceptorMetricsMBean {
 
     private final AtomicLong recordsExternalized = new AtomicLong();
     private final AtomicLong recordsInline = new AtomicLong();
     private final AtomicLong bytesExternalized = new AtomicLong();
     private final AtomicLong externalizationErrors = new AtomicLong();
 
-    void recordExternalized(long bytes) {
+    public void recordExternalized(long bytes) {
         recordsExternalized.incrementAndGet();
         bytesExternalized.addAndGet(bytes);
     }
 
-    void recordInline() {
+    public void recordInline() {
         recordsInline.incrementAndGet();
     }
 
-    void recordError() {
+    public void recordError() {
         externalizationErrors.incrementAndGet();
     }
 

@@ -29,6 +29,9 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.trivadis.demo.dto.ObjectReference;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.JmxMetrics;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetrics;
+import com.trivadis.kafkaws.refbased.interceptor.metrics.ProducerInterceptorMetricsMBean;
 
 /**
  * Kafka {@link ProducerInterceptor} that implements Reference-Based Messaging (the Claim Check

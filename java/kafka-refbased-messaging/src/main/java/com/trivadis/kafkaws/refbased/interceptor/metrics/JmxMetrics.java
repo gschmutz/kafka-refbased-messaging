@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafkaws.refbased.interceptor.metrics;
 
 import java.lang.management.ManagementFactory;
 
@@ -10,7 +10,7 @@ import javax.management.ObjectName;
  * Helper to (un)register the interceptor metrics MBeans on the platform MBean server. Registration
  * is best-effort: any JMX failure is swallowed so monitoring never breaks message flow.
  */
-final class JmxMetrics {
+public final class JmxMetrics {
 
     static final String DOMAIN = "com.trivadis.kafkaws.refbased";
 
@@ -23,7 +23,7 @@ final class JmxMetrics {
      *
      * @return the registered {@link ObjectName}, or {@code null} if registration failed
      */
-    static ObjectName register(Object mbean, String type, String clientId) {
+    public static ObjectName register(Object mbean, String type, String clientId) {
         try {
             MBeanServer server = ManagementFactory.getPlatformMBeanServer();
             ObjectName name = new ObjectName(DOMAIN + ":type=" + type + ",client-id=" + sanitize(clientId));
@@ -37,7 +37,7 @@ final class JmxMetrics {
         }
     }
 
-    static void unregister(ObjectName name) {
+    public static void unregister(ObjectName name) {
         if (name == null) {
             return;
         }

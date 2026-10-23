@@ -1,4 +1,4 @@
-package com.trivadis.kafkaws.refbased.interceptor;
+package com.trivadis.kafkaws.refbased.interceptor.metrics;
 
 /**
  * JMX view of the {@link ProducerInterceptorToStorage} behaviour. Registered under
